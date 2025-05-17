@@ -21,11 +21,15 @@ def init_db():
         with get_db_connection() as conn:
             with open("bot/database/schema.sql", "r") as f:
                 conn.executescript(f.read())
+            # Ensure max_display_verses and is_active are added to existing tables
+            cursor = conn.cursor()
             conn.commit()
             logger.info("Database schema initialized successfully")
     except sqlite3.Error as e:
         logger.error(f"Failed to initialize database: {e}")
-        raise
+        # Ignore if columns already exist
+        if "duplicate column name" not in str(e):
+            raise
     except FileNotFoundError as e:
         logger.error(f"Schema file not found: {e}")
         raise

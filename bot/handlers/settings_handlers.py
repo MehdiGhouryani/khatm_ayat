@@ -76,18 +76,23 @@ async def reset_kol(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             cursor.execute(
                 """
-                DELETE FROM khatm_ranges 
-                WHERE group_id = ? AND topic_id = ?
+                UPDATE topics 
+                SET current_verse_id = (
+                    SELECT start_verse_id FROM khatm_ranges 
+                    WHERE group_id = ? AND topic_id = ?
+                )
+                WHERE group_id = ? AND topic_id = ? AND khatm_type = 'ghoran'
                 """,
-                (group_id, topic_id)
+                (group_id, topic_id, group_id, topic_id)
             )
             conn.commit()
             logger.info(f"All khatm stats reset: group_id={group_id}, topic_id={topic_id}")
 
-        await update.message.reply_text("کل آمار ختم‌ها ریست شد. برای ختم قرآن، محدوده جدید را با /set_range تنظیم کنید.")
+        await update.message.reply_text("کل آمار ختم‌ها ریست شد.")
     except Exception as e:
         logger.error(f"Error in reset_kol: {e}")
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
+
 
 async def set_max(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /max command to set maximum number."""

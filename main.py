@@ -1,8 +1,17 @@
 import logging
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ConversationHandler
-from bot.handlers.admin_handlers import start, stop, topic, khatm_selection, set_zekr_text, help_command, set_range
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ConversationHandler
+from telegram import Update
+from telegram.ext import ContextTypes
+from bot.handlers.admin_handlers import (
+    start, stop, topic, khatm_selection, set_zekr_text, help_command, set_range,
+    start_khatm_zekr, start_khatm_salavat, start_khatm_ghoran, set_salavat_count
+)
 from bot.handlers.khatm_handlers import handle_khatm_message
-from bot.handlers.settings_handlers import reset_zekr, reset_kol, stop_on, stop_on_off, set_max, max_off, set_min, min_off, sepas_on, sepas_off, add_sepas, set_number, number_off, reset_daily, reset_off, time_off, time_off_disable, lock_on, lock_off, delete_after, delete_off, jam_off, jam_on, set_completion_message, reset_number_on, reset_number_off
+from bot.handlers.settings_handlers import (
+    reset_zekr, reset_kol, stop_on, stop_on_off, set_max, max_off, set_min, min_off, sepas_on, sepas_off, add_sepas,
+    set_number, number_off, reset_daily, reset_off, time_off, time_off_disable, lock_on, lock_off, delete_after, delete_off,
+    jam_off, jam_on, set_completion_message, reset_number_on, reset_number_off
+)
 from bot.handlers.stats_handlers import show_total_stats, show_ranking
 from bot.handlers.hadith_handlers import hadis_on, hadis_off
 from bot.handlers.error_handlers import error_handler
@@ -11,28 +20,34 @@ from bot.utils.constants import DEFAULT_SEPAS_TEXTS
 from bot.utils.quran import QuranManager
 from config.settings import TELEGRAM_TOKEN
 
+# تنظیم لاگ‌گذاری
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.DEBUG,
+    level=logging.INFO,
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler("bot.log")
+        logging.FileHandler("bot.log", encoding='utf-8')
     ]
 )
 logger = logging.getLogger(__name__)
 
-ZEKR_STATE = 1
+# ثابت‌های حالت برای ConversationHandler
+ZEKR_STATE, SALAVAT_STATE, QURAN_STATE = range(1, 4)
 
-async def cancel_zekr(update, context):
-    await update.message.reply_text("تنظیم ذکر لغو شد.")
-    context.user_data.pop("awaiting_zekr", None)
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cancel the current conversation."""
+    logger.debug(f"User {update.effective_user.id} cancelled conversation in chat {update.effective_chat.id}")
+    await update.message.reply_text("❌ عملیات لغو شد.")
+    context.user_data.clear()
     return ConversationHandler.END
 
-async def main():
+def main():
     try:
+        # Initialize database
         init_db()
         logger.info("Database initialized successfully")
 
+        # Insert default sepas texts
         with get_db_connection() as conn:
             cursor = conn.cursor()
             for text in DEFAULT_SEPAS_TEXTS:
@@ -41,15 +56,34 @@ async def main():
                     (text,)
                 )
             conn.commit()
-            logger.info("Default sepas texts inserted")
+        logger.info("Default sepas texts inserted")
 
         # Initialize QuranManager
         global quran
         quran = QuranManager()
+        logger.info("QuranManager initialized")
 
-        app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+        # Build the application
+        app = Application.builder().token(TELEGRAM_TOKEN).build()
 
-        # Command handlers
+        # Conversation handler for khatm settings
+        conv_handler = ConversationHandler(
+            entry_points=[
+                CommandHandler("khatm_zekr", start_khatm_zekr),
+                CommandHandler("khatm_salavat", start_khatm_salavat),
+                CommandHandler("khatm_ghoran", start_khatm_ghoran),
+                CallbackQueryHandler(khatm_selection, pattern="khatm_(zekr|salavat|ghoran)"),
+            ],
+            states={
+                ZEKR_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_zekr_text)],
+                SALAVAT_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_salavat_count)],
+                QURAN_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_range)],
+            },
+            fallbacks=[CommandHandler("cancel", cancel)],
+        )
+        app.add_handler(conv_handler)
+
+        # Add other command handlers
         app.add_handler(CommandHandler("help", help_command))
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("stop", stop))
@@ -86,28 +120,19 @@ async def main():
         app.add_handler(CommandHandler("jam_off", jam_off))
         app.add_handler(CommandHandler("set_completion_message", set_completion_message))
 
-        # Conversation handler for zekr text input
-        conv_handler = ConversationHandler(
-            entry_points=[CallbackQueryHandler(khatm_selection, pattern="khatm_zekr")],
-            states={
-                ZEKR_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_zekr_text)],
-            },
-            fallbacks=[CommandHandler("cancel", cancel_zekr)],
-        )
-        app.add_handler(conv_handler)
-
         # Message handler for khatm contributions
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_khatm_message))
 
         # Error handler
         app.add_error_handler(error_handler)
 
+        # Start the bot
         logger.info("Starting bot...")
-        await app.run_polling(allowed_updates=["message", "chat_member", "callback_query"])
+        app.run_polling(allowed_updates=["message", "chat_member", "callback_query"], timeout=20)
+
     except Exception as e:
         logger.error(f"Failed to start bot: {e}", exc_info=True)
         raise
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    main()

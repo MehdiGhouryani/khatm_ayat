@@ -13,11 +13,13 @@ CREATE TABLE IF NOT EXISTS groups (
     stop_number INTEGER DEFAULT 0,
     time_off_start TEXT DEFAULT '',
     time_off_end TEXT DEFAULT '',
-    show_total INTEGER DEFAULT 0
+    show_total INTEGER DEFAULT 0,
+    max_display_verses INTEGER DEFAULT 10
 );
 
 CREATE TABLE IF NOT EXISTS topics (
     group_id INTEGER,
+    name TEXT, 
     topic_id INTEGER,
     khatm_type TEXT NOT NULL CHECK(khatm_type IN ('ghoran', 'salavat', 'zekr')),
     zekr_text TEXT DEFAULT '',
@@ -28,6 +30,9 @@ CREATE TABLE IF NOT EXISTS topics (
     min_ayat INTEGER DEFAULT 1,
     stop_number INTEGER DEFAULT 0,
     completion_message TEXT DEFAULT '',
+    completion_count INTEGER DEFAULT 0,
+    current_verse_id INTEGER DEFAULT 0,
+    is_active INTEGER DEFAULT 1,
     PRIMARY KEY (group_id, topic_id),
     FOREIGN KEY (group_id) REFERENCES groups(group_id)
 );

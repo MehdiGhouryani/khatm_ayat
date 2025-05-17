@@ -6,7 +6,7 @@ from typing import List, Dict, Optional
 logger = logging.getLogger(__name__)
 
 class QuranManager:
-    def __init__(self, json_path: str = "data/quran_with_bismillah.json"):
+    def __init__(self, json_path: str = "data/quran.json"):
         """Initialize QuranManager with the path to the JSON file."""
         self.json_path = json_path
         try:

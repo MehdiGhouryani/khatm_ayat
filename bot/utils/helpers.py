@@ -2,6 +2,7 @@ import re
 import random
 import logging
 import sqlite3
+from typing import Optional, List, Dict
 from bot.utils.quran import QuranManager
 from bot.database.db import get_db_connection
 
@@ -25,54 +26,6 @@ def parse_number(text):
     except (ValueError, TypeError) as e:
         logger.warning(f"Failed to parse number: {text}, error: {e}")
         return None
-
-def format_khatm_message(khatm_type, previous_total, number, new_total, sepas_text, group_id, zekr_text=None, verse_id=None):
-    """Format khatm response message."""
-    try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT show_total, sepas_enabled FROM groups WHERE group_id = ?", (group_id,))
-            group = cursor.fetchone()
-            show_total = group['show_total'] if group else 0
-            sepas_enabled = group['sepas_enabled'] if group else 1
-
-        if khatm_type == "ghoran":
-            if verse_id is None:
-                logger.error("verse_id is required for Quran khatm message")
-                return "خطا در نمایش پیام ختم"
-            verse = quran.get_verse_by_id(verse_id)
-            if not verse:
-                logger.error(f"Verse not found: verse_id={verse_id}")
-                return "خطا در نمایش پیام ختم"
-            message = (
-                f"مشارکت ثبت شد: {verse['surah_name']}، آیه {verse['ayah_number']}\n"
-                f"متن: {verse['text']}\n"
-            )
-            if show_total:
-                message += f"مجموع آیات: {new_total}\n"
-            if sepas_enabled and sepas_text:
-                message += f"{sepas_text}"
-        elif khatm_type == "zekr":
-            message = (
-                f"از {previous_total} {zekr_text or 'ذکر'}، {number} {zekr_text or 'ذکر'} گفته شد.\n"
-            )
-            if show_total:
-                message += f"جمع: {new_total}\n"
-            if sepas_enabled and sepas_text:
-                message += f"{sepas_text}"
-        else:  # salavat
-            message = (
-                f"از {previous_total} صلوات، {number} صلوات فرستاده شد.\n"
-            )
-            if show_total:
-                message += f"جمع: {new_total}\n"
-            if sepas_enabled and sepas_text:
-                message += f"{sepas_text}"
-        logger.debug(f"Formatted khatm message: {message}")
-        return message
-    except Exception as e:
-        logger.error(f"Failed to format khatm message: {e}")
-        return "خطا در نمایش پیام ختم"
 
 def get_random_sepas(group_id, db_conn):
     """Get a random sepas text for the group."""
@@ -103,3 +56,77 @@ def format_user_link(user_id, username, first_name):
     except Exception as e:
         logger.error(f"Failed to format user link: {e}")
         return f"کاربر {user_id}"
+    
+def format_khatm_message(
+    khatm_type: str,
+    previous_total: int,
+    amount: int,
+    new_total: int,
+    sepas_text: str,
+    group_id: int,
+    zekr_text: Optional[str] = None,
+    verses: Optional[List[Dict]] = None,
+    max_display_verses: int = 10,
+    completion_count: int = 0
+) -> str:
+    """Format the khatm contribution message."""
+    try:
+        if khatm_type == "ghoran":
+            if not verses:
+                logger.warning("No verses provided for Quran khatm message")
+                return "خطا: اطلاعات آیات موجود نیست."
+            
+            # Get current surah name from the first verse
+            current_surah = verses[0]['surah_name']
+            
+            # Format verse texts with numbering
+            verse_texts = []
+            for idx, verse in enumerate(verses[:max_display_verses], 1):
+                verse_text = verse.get('text', 'متن آیه موجود نیست')
+                verse_texts.append(f"{idx}: {verse_text}")
+            if len(verses) > max_display_verses:
+                verse_texts.append("... (برای آیات بیشتر، محدوده را بررسی کنید)")
+            
+            message = (
+                f"نام سوره فعلی: {current_surah}\n"
+                f"تعداد‌ ختم قرآن انجام شده: {completion_count}\n"
+                f"————————————-\n"
+                f"تعداد آیه سهم شما: {amount} آیه\n"
+                "\n".join(verse_texts) + "\n"
+                f"————————————-\n"
+            )
+            if sepas_text:
+                message += f"🌱 متن سپاس 🌱 {sepas_text}\n"
+            logger.debug(f"Formatted Quran khatm message: {message}")
+            return message
+
+        elif khatm_type == "salavat":
+            message = (
+                f"🙏 *{amount} صلوات* ثبت شد!\n"
+                f"جمع کل: {new_total} صلوات\n"
+            )
+            if sepas_text:
+                message += f"🌱 متن سپاس 🌱 {sepas_text}\n"
+            logger.debug(f"Formatted salavat khatm message: {message}")
+            return message
+
+        elif khatm_type == "zekr":
+            if not zekr_text:
+                logger.warning("No zekr text provided for zekr khatm message")
+                return "خطا: متن ذکر مشخص نشده است."
+            message = (
+                f"📿 *{amount} {zekr_text}* ثبت شد!\n"
+                f"جمع کل: {new_total} {zekr_text}\n"
+            )
+            if sepas_text:
+                message += f"🌱 متن سپاس 🌱 {sepas_text}\n"
+            logger.debug(f"Formatted zekr khatm message: {message}")
+            return message
+
+        else:
+            logger.error(f"Unknown khatm type: {khatm_type}")
+            return "خطا: نوع ختم نامعتبر است."
+
+    except Exception as e:
+        logger.error(f"Error formatting khatm message: {e}", exc_info=True)
+        return "خطا در تولید پیام ختم."
