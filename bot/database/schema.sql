@@ -84,3 +84,9 @@ CREATE TABLE IF NOT EXISTS hadith_settings (
     hadith_enabled INTEGER DEFAULT 0,
     FOREIGN KEY (group_id) REFERENCES groups(group_id)
 );
+
+CREATE TABLE IF NOT EXISTS tag_timestamps (
+    group_id INTEGER PRIMARY KEY,
+    last_tag_time TEXT NOT NULL,
+    FOREIGN KEY (group_id) REFERENCES groups(group_id)
+);

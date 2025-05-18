@@ -4,85 +4,159 @@ from telegram.ext import ContextTypes, filters, ConversationHandler
 from bot.database.db import get_db_connection
 from bot.utils.constants import KHATM_TYPES
 from bot.utils.quran import QuranManager
+from bot.utils.helpers import parse_number
+import re
+from telegram import constants
 
 logger = logging.getLogger(__name__)
-
 quran = QuranManager()
 
+TEXT_COMMANDS = {
+    "lock on": {"handler": "lock_on", "admin_only": True, "aliases": ["قفل روشن"]},
+    "lock off": {"handler": "lock_off", "admin_only": True, "aliases": ["قفل خاموش"]},
+    "start": {"handler": "start", "admin_only": True, "aliases": ["شروع"]},
+    "stop": {"handler": "stop", "admin_only": True, "aliases": ["توقف"]},
+    "help": {"handler": "help_command", "admin_only": False, "aliases": ["راهنما"]},
+    "max": {"handler": "set_max", "admin_only": True, "aliases": ["حداکثر"]},
+    "max off": {"handler": "max_off", "admin_only": True, "aliases": ["حداکثر خاموش"]},
+    "min": {"handler": "set_min", "admin_only": True, "aliases": ["حداقل"]},
+    "min off": {"handler": "min_off", "admin_only": True, "aliases": ["حداقل خاموش"]},
+    "sepas on": {"handler": "sepas_on", "admin_only": True, "aliases": ["سپاس روشن"]},
+    "sepas off": {"handler": "sepas_off", "admin_only": True, "aliases": ["سپاس خاموش"]},
+    "add sepas": {"handler": "add_sepas", "admin_only": True, "aliases": ["اضافه سپاس"]},
+    "reset daily": {"handler": "reset_daily", "admin_only": True, "aliases": ["ریست روزانه"]},
+    "reset off": {"handler": "reset_off", "admin_only": True, "aliases": ["ریست خاموش"]},
+    "reset zekr": {"handler": "reset_zekr", "admin_only": True, "aliases": ["ریست ذکر"]},
+    "reset kol": {"handler": "reset_kol", "admin_only": True, "aliases": ["ریست کل"]},
+    "time off": {"handler": "time_off", "admin_only": True, "aliases": ["خاموشی"]},
+    "time off disable": {"handler": "time_off_disable", "admin_only": True, "aliases": ["خاموشی غیرفعال"]},
+    "hadis on": {"handler": "hadis_on", "admin_only": True, "aliases": ["حدیث روشن"]},
+    "hadis off": {"handler": "hadis_off", "admin_only": True, "aliases": ["حدیث خاموش"]},
+    "amar kol": {"handler": "show_total_stats", "admin_only": False, "aliases": ["آمار کل"]},
+    "amar list": {"handler": "show_ranking", "admin_only": False, "aliases": ["لیست آمار"]},
+    "stop on": {"handler": "stop_on", "admin_only": True, "aliases": ["توقف روشن"]},
+    "stop on off": {"handler": "stop_on_off", "admin_only": True, "aliases": ["توقف خاموش"]},
+    "number": {"handler": "set_number", "admin_only": True, "aliases": ["تعداد"]},
+    "number off": {"handler": "number_off", "admin_only": True, "aliases": ["تعداد خاموش"]},
+    "reset number on": {"handler": "reset_number_on", "admin_only": True, "aliases": ["ریست تعداد روشن"]},
+    "reset number off": {"handler": "reset_number_off", "admin_only": True, "aliases": ["ریست تعداد خاموش"]},
+    "jam on": {"handler": "jam_on", "admin_only": True, "aliases": ["جمع روشن"]},
+    "jam off": {"handler": "jam_off", "admin_only": True, "aliases": ["جمع خاموش"]},
+    "set completion message": {"handler": "set_completion_message", "admin_only": True, "aliases": ["پیام تکمیل"]},
+    "khatm zekr": {"handler": "start_khatm_zekr", "admin_only": True, "aliases": ["ختم ذکر"]},
+    "khatm salavat": {"handler": "start_khatm_salavat", "admin_only": True, "aliases": ["ختم صلوات"]},
+    "khatm ghoran": {"handler": "start_khatm_ghoran", "admin_only": True, "aliases": ["ختم قرآن"]},
+    "set range": {"handler": "set_range", "admin_only": True, "aliases": ["تنظیم محدوده"]},
+    "topic": {"handler": "topic", "admin_only": True, "aliases": ["تاپیک"]},
+    "tag": {"handler": "tag_command", "admin_only": True, "aliases": ["تگ"]},
+    "cancel_tag": {"handler": "cancel_tag", "admin_only": True, "aliases": ["لغو تگ"]},
+    "subtract": {"handler": "subtract_khatm", "admin_only": True, "aliases": ["کاهش"]},
+    "start from": {"handler": "start_from", "admin_only": True, "aliases": ["شروع از"]}
+}
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /help command to show command guide."""
     try:
         help_text = """
-<b>راهنمای دستورات ربات</b>
+**دستورات عمومی ربات**
 
-<b>1. فعال‌سازی و توقف ربات:</b>
-- /start: فعال کردن ربات در گروه
-- /stop: غیرفعال کردن ربات
+فعال‌سازی و توقف ربات:
+`start` - فعال کردن ربات
+`stop` - غیرفعال کردن ربات
 
-<b>2. تنظیم نوع ختم:</b>
-- /khatm_ghoran: شروع ختم قرآن (پیش‌فرض: کل قرآن)
-- /khatm_salavat: شروع ختم صلوات (نیاز به تعیین تعداد)
-- /khatm_zekr: شروع ختم ذکر (نیاز به تعیین متن ذکر)
-- /set_range: تنظیم محدوده ختم قرآن (مثال: سوره 1 آیه 1 تا سوره 2 آیه 10)
+ریست آمار:
+`reset zekr` - ریست آمار صلوات و ذکر
+`reset kol` - ریست تمام آمار و اعداد
+`start from 1234` - شروع ختم از عدد دلخواه
 
-<b>3. مدیریت ختم:</b>
-- /number 14000: تنظیم تعداد برای ختم صلوات/ذکر (مثال: 14000 صلوات)
-- /reset_number_on: ریست خودکار پس از تکمیل تعداد
-- /reset_number_off: غیرفعال کردن ریست خودکار
-- /reset_on: ریست خودکار آمار هر 24 ساعت
-- /reset_off: غیرفعال کردن ریست 24 ساعته
-- /stop_on 5000: توقف ختم در تعداد مشخص (مثال: 5000)
-- /stop_on_off: غیرفعال کردن توقف
+تنظیم تعداد و شروع ختم:
+`number 14000` - تنظیم تعداد هدف صلوات/ذکر
+`khatm zekr` - شروع ختم ذکر
+`khatm salavat` - شروع ختم صلوات
+`khatm ghoran` - شروع ختم قرآن
+`set range` - تنظیم محدوده ختم قرآن (مثال: surah 1 ayah 1 to 2:10)
+`set completion message` - تنظیم پیام پایان ختم
 
-<b>4. محدودیت‌ها:</b>
-- /max 1000: تنظیم حداکثر تعداد (مثال: 1000 صلوات یا آیه)
-- /max_off: غیرفعال کردن حداکثر
-- /min 10: تنظیم حداقل تعداد (مثال: 10 صلوات یا آیه)
-- /min_off: غیرفعال کردن حداقل
-- /set_max_verses 10: تنظیم حداکثر تعداد آیات نمایش‌داده‌شده (مثال: 10 آیه)
-- /lock_on: قفل پیام‌ها (فقط اعداد یا آیات)
-- /lock_off: غیرفعال کردن قفل
+تصحیح مشارکت:
+`-100` - کاهش صلوات یا ذکر اشتباه واردشده
 
-<b>5. پیام‌ها و متن‌ها:</b>
-- /sepas_on: فعال کردن متن‌های سپاس
-- /sepas_off: غیرفعال کردن متن‌های سپاس
-- /addsepas [متن]: افزودن متن سپاس (مثال: /addsepas یا علی)
-- /set_completion_message [متن]: تنظیم پیام تبریک (مثال: /set_completion_message تبریک! ختم کامل شد)
-- /jam_on: نمایش جمع کل در پیام‌ها
-- /jam_off: غیرفعال کردن نمایش جمع کل
+ریست خودکار:
+`reset on` - فعال کردن ریست خودکار 24 ساعته
+`reset off` - غیرفعال کردن ریست خودکار 24 ساعته
+`reset number on` - فعال کردن ریست خودکار پس از هر دوره
+`reset number off` - غیرفعال کردن ریست خودکار پس از هر دوره
 
-<b>6. آمار و رتبه‌بندی:</b>
-- /amar_kol: نمایش آمار کل ختم
-- /amar_list: نمایش رتبه‌بندی مشارکت‌کنندگان
+پیام‌های سپاس:
+`sepas on` - فعال کردن پیام‌های سپاس زیر پیام‌های ربات
+`sepas off` - غیرفعال کردن پیام‌های سپاس
+`add sepas یا علی` - افزودن متن سپاس دلخواه
 
-<b>7. ریست آمار:</b>
-- /reset_zekr: ریست آمار صلوات و ذکر
-- /reset_kol: ریست کل آمار (صلوات، ذکر، آیات)
+آمار و رتبه‌بندی:
+`amar kol` - نمایش آمار کل ختم فعال
+`amar list` - نمایش رتبه‌بندی ذاکرها
 
-<b>8. حدیث روزانه:</b>
-- /hadis_on: فعال کردن حدیث روزانه
-- /hadis_off: غیرفعال کردن حدیث روزانه
+تنظیم محدودیت‌های ارسال:
+`max 1000` - تنظیم حداکثر تعداد مجاز
+`max off` - غیرفعال کردن حداکثر تعداد
+`min 10` - تنظیم حداقل تعداد مجاز
+`min off` - غیرفعال کردن حداقل تعداد
 
-<b>9. پاک‌سازی و توقف:</b>
-- /time_off 23-08: توقف ساعتی (مثال: 11 شب تا 8 صبح)
-- /delete_on 01: پاک‌سازی پیام‌ها پس از 1 دقیقه
-- /delete_off: غیرفعال کردن پاک‌سازی
+حدیث روزانه:
+`hadis on` - فعال کردن حدیث روزانه
+`hadis off` - غیرفعال کردن حدیث روزانه
 
-<b>10. تنظیمات تاپیک:</b>
-- /topic 1: تنظیم نام تاپیک (مثال: تاپیک 1)
+نمایش جمع مشارکت‌ها:
+`jam on` - نمایش جمع اعداد مشارکت
+`jam off` - مخفی کردن جمع اعداد مشارکت
+
+توقف خودکار:
+`stop on 5000` - توقف ختم در تعداد دلخواه
+`stop on off` - غیرفعال کردن توقف خودکار
+
+توقف ساعتی:
+`time off 23-08` - تنظیم ساعات خاموشی ربات
+`time off disable` - غیرفعال کردن ساعات خاموشی
+
+حذف خودکار پیام‌ها:
+`delete on 01` - حذف پیام‌های ربات پس از X دقیقه
+`delete off` - غیرفعال کردن حذف خودکار
+
+قفل پیام‌ها:
+`lock on` - قفل کردن تمام پیام‌ها به جز عدد
+`lock off` - غیرفعال کردن قفل پیام‌ها
+
+تگ کردن اعضا:
+`tag` - تگ کردن تمام اعضای فعال گروه
+`cancel_tag` - لغو عملیات تگ کردن
+
+----------------------------------------
+**قابلیت‌های گروه‌های تاپیک‌دار**
+
+نام‌گذاری تاپیک:
+`topic اصلی` - تنظیم نام تاپیک (مثال: topic اصلی)
+
+تنظیم نوع ختم در تاپیک:
+`khatm salavat` - شروع ختم صلوات در تاپیک
+`khatm ghoran` - شروع ختم قرآن در تاپیک
+`khatm zekr` - شروع ختم ذکر در تاپیک
+
+----------------------------------------
+**دستورات مخصوص ختم قرآن**
+
+تنظیم تعداد آیات:
+`min 1` - حداقل تعداد آیات برای هر فرد
+`max 20` - حداکثر تعداد آیات برای هر فرد
+`max day 20` - حداکثر تعداد آیات روزانه هر فرد
 """
-        await update.message.reply_text(help_text, parse_mode="HTML")
+        await update.message.reply_text(help_text, parse_mode=constants.ParseMode.MARKDOWN)
         logger.info(f"Help command executed by user_id={update.effective_user.id}")
     except Exception as e:
         logger.error(f"Error in help command: {e}")
-        await update.message.reply_text("⚠️ خطایی رخ داد؛ لطفاً دوباره تلاش کنید.")
+        await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
 async def set_max_verses(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Set the maximum number of verses to display."""
     try:
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted set_max_verses")
-            await update.message.reply_text("فقط ادمین می‌تواند حداکثر آیات نمایش را تنظیم کند.")
             return
 
         if not context.args:
@@ -155,20 +229,28 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if is_topic_enabled:
             await update.message.reply_text("گروه تاپیک‌دار است. لطفاً تاپیک‌ها را با /topic تنظیم کنید.")
         else:
-            await update.message.reply_text("گروه بدون تاپیک است. حالت بدون تاپیک فعال شد. می‌توانید ختم را با دستورات /khatm_zekr، /khatm_salavat یا /khatm_ghoran تنظیم کنید.")
+            message = (
+                "گروه فاقد تاپیک است و حالت بدون تاپیک فعال شد.\n\n"
+                "برای شروع ختم، لطفاً یکی از دستورات زیر را وارد کنید:\n"
+                "• ختم ذکر: /khatm_zekr\n"
+                "• ختم صلوات: /khatm_salavat\n"
+                "• ختم قرآن: /khatm_ghoran"
+            )
+            await update.message.reply_text(message)
 
-        await update.message.reply_text("ربات با موفقیت فعال شد.")
+        await update.message.reply_text(
+            "ربات با موفقیت فعال شد و آماده به کار است."
+        )
+
         logger.info(f"Bot activated for group_id={group_id}")
     except Exception as e:
         logger.error(f"Error in start command: {e}", exc_info=True)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /stop command to deactivate the bot."""
     try:
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted /stop")
-            await update.message.reply_text("فقط ادمین می‌تواند ربات را متوقف کند.")
             return
 
         group_id = update.effective_chat.id
@@ -191,7 +273,6 @@ async def topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted /topic")
-            await update.message.reply_text("فقط ادمین می‌تواند تاپیک تنظیم کند.")
             return
 
         if not context.args:
@@ -245,7 +326,6 @@ async def khatm_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted khatm_selection")
-            await query.message.reply_text("فقط ادمین می‌تواند نوع ختم را تنظیم کند.")
             return
 
         group_id = update.effective_chat.id
@@ -295,7 +375,6 @@ async def set_zekr_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted set_zekr_text")
-            await update.message.reply_text("فقط ادمین می‌تواند ذکر را تنظیم کند.")
             return
 
         zekr_data = context.user_data.pop("awaiting_zekr")
@@ -316,7 +395,6 @@ async def set_zekr_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
 async def set_range(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Set the verse range for a Quran khatm."""
     try:
         if not update.message or not update.message.text:
             logger.debug("No message text for set_range")
@@ -324,50 +402,76 @@ async def set_range(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted set_range")
-            await update.message.reply_text("فقط ادمین‌ها می‌توانند محدوده ختم را تنظیم کنند.")
+            await update.message.reply_text("فقط ادمین می‌تواند محدوده ختم را تنظیم کند.")
             return
 
         group_id = update.effective_chat.id
         topic_id = update.message.message_thread_id or group_id
-
-        # Parse command (e.g., "/set_range سوره 1 آیه 1 تا سوره 2 آیه 10")
         text = update.message.text.strip()
-        try:
-            parts = text.split()
-            start_surah = int(parts[parts.index("سوره") + 1])
-            start_ayah = int(parts[parts.index("آیه") + 1])
-            end_surah = int(parts[parts.index("سوره", parts.index("تا")) + 1])
-            end_ayah = int(parts[parts.index("آیه", parts.index("تا")) + 1])
 
-            start_verse = quran.get_verse(start_surah, start_ayah)
-            end_verse = quran.get_verse(end_surah, end_ayah)
-            if not start_verse or not end_verse:
-                logger.debug(f"Invalid verses: start={start_surah}:{start_ayah}, end={end_surah}:{end_ayah}")
-                await update.message.reply_text("آیات نامعتبر هستند.")
-                return
+        pattern = r'(?:سوره|surah)?\s*(\d+)\s*(?:آیه|ایه|ayah)?\s*(\d+)\s*(?:تا|to|-)\s*(?:سوره|surah)?\s*(\d+)\s*(?:آیه|ایه|ayah)?\s*(\d+)|(\d+):(\d+)\s*(?:تا|to|-)\s*(\d+):(\d+)'
+        match = re.search(pattern, text, re.IGNORECASE)
 
-            with get_db_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "INSERT OR REPLACE INTO khatm_ranges (group_id, topic_id, start_verse_id, end_verse_id) VALUES (?, ?, ?, ?)",
-                    (group_id, topic_id, start_verse['id'], end_verse['id'])
-                )
-                cursor.execute(
-                    "UPDATE topics SET khatm_type = ?, current_verse_id = ? WHERE topic_id = ? AND group_id = ?",
-                    ("ghoran", start_verse['id'], topic_id, group_id)
-                )
-                conn.commit()
-                logger.info(f"Khatm range set: group_id={group_id}, topic_id={topic_id}, range={start_verse['id']}-{end_verse['id']}")
-
-            await update.message.reply_text(
-                f"محدوده ختم تنظیم شد: از {start_verse['surah_name']} آیه {start_ayah} تا {end_verse['surah_name']} آیه {end_ayah}\n"
-                "بسم‌الله به‌عنوان آیه اول هر سوره (به جز سوره توبه) شمرده می‌شود."
-            )
-        except (ValueError, IndexError):
+        if not match:
             logger.debug(f"Invalid set_range format: {text}")
-            await update.message.reply_text("لطفاً محدوده را به شکل صحیح وارد کنید (مثل '/set_range سوره 1 آیه 1 تا سوره 2 آیه 10').")
+            await update.message.reply_text(
+                "فرمت نامعتبر است. لطفاً محدوده را به یکی از فرمت‌های زیر وارد کنید:\n"
+                "- سوره ۱ آیه ۱ تا سوره ۲ آیه ۱۰\n"
+                "- سوره ۱ ایه ۱ تا سوره ۲ ایه ۱۰\n"
+                "- surah 1 ayah 1 to surah 2 ayah 10\n"
+                "- 1:1-2:10\n"
+                "مثال: `/set_range سوره 1 آیه 1 تا سوره 2 آیه 10`"
+            )
+            return
+
+        if match.group(1):
+            start_surah = parse_number(match.group(1))
+            start_ayah = parse_number(match.group(2))
+            end_surah = parse_number(match.group(3))
+            end_ayah = parse_number(match.group(4))
+        else:
+            start_surah = parse_number(match.group(5))
+            start_ayah = parse_number(match.group(6))
+            end_surah = parse_number(match.group(7))
+            end_ayah = parse_number(match.group(8))
+
+        if not (1 <= start_surah <= 114 and 1 <= end_surah <= 114):
+            logger.debug(f"Invalid surah number: start={start_surah}, end={end_surah}")
+            await update.message.reply_text("شماره سوره باید بین ۱ تا ۱۱۴ باشد.")
+            return
+
+        start_verse = quran.get_verse(start_surah, start_ayah)
+        end_verse = quran.get_verse(end_surah, end_ayah)
+        if not start_verse or not end_verse:
+            logger.debug(f"Invalid verses: start={start_surah}:{start_ayah}, end={end_surah}:{end_ayah}")
+            await update.message.reply_text(f"آیه نامعتبر است: {start_surah}:{start_ayah} یا {end_surah}:{end_ayah} وجود ندارد.")
+            return
+
+        if start_verse['id'] > end_verse['id']:
+            logger.debug(f"Start verse after end verse: start_id={start_verse['id']}, end_id={end_verse['id']}")
+            await update.message.reply_text("آیه شروع باید قبل از آیه پایان باشد.")
+            return
+
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT OR REPLACE INTO khatm_ranges (group_id, topic_id, start_verse_id, end_verse_id) VALUES (?, ?, ?, ?)",
+                (group_id, topic_id, start_verse['id'], end_verse['id'])
+            )
+            cursor.execute(
+                "UPDATE topics SET khatm_type = ?, current_verse_id = ? WHERE topic_id = ? AND group_id = ?",
+                ("ghoran", start_verse['id'], topic_id, group_id)
+            )
+            conn.commit()
+            logger.info(f"Khatm range set: group_id={group_id}, topic_id={topic_id}, range={start_verse['id']}-{end_verse['id']}")
+
+        await update.message.reply_text(
+            f"محدوده ختم تنظیم شد: از {start_verse['surah_name']} آیه {start_ayah} تا {end_verse['surah_name']} آیه {end_ayah}\n"
+            "بسم‌الله به‌عنوان آیه اول هر سوره (به جز سوره توبه) شمرده می‌شود."
+        )
+
     except Exception as e:
-        logger.error(f"Error in set_range command: {e}")
+        logger.error(f"Error in set_range command: {e}", exc_info=True)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
 async def start_khatm_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -375,7 +479,6 @@ async def start_khatm_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted start_khatm_zekr")
-            await update.message.reply_text("فقط ادمین می‌تواند ختم ذکر را تنظیم کند.")
             return
 
         group_id = update.effective_chat.id
@@ -402,7 +505,6 @@ async def start_khatm_salavat(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted start_khatm_salavat")
-            await update.message.reply_text("فقط ادمین می‌تواند ختم صلوات را تنظیم کند.")
             return
 
         group_id = update.effective_chat.id
@@ -429,7 +531,6 @@ async def start_khatm_ghoran(update: Update, context: ContextTypes.DEFAULT_TYPE)
     try:
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted start_khatm_ghoran")
-            await update.message.reply_text("فقط ادمین می‌تواند ختم قرآن را تنظیم کند.")
             return
 
         group_id = update.effective_chat.id
@@ -452,9 +553,11 @@ async def start_khatm_ghoran(update: Update, context: ContextTypes.DEFAULT_TYPE)
             logger.info(f"Quran khatm started: topic_id={topic_id}, group_id={group_id}, range={start_verse['id']}-{end_verse['id']}")
 
         await update.message.reply_text(
-            "📖 ختم قرآن فعال شد (پیش‌فرض: کل قرآن). برای تغییر محدوده، از /set_range استفاده کنید (مثال: سوره 1 آیه 1 تا سوره 2 آیه 10).\n"
-            "بسم‌الله به‌عنوان آیه اول هر سوره (به جز سوره توبه) شمرده می‌شود."
+            "📖 ختم قرآن با محدوده پیش‌فرض (کل قرآن) فعال شد.\n"
+            "برای تنظیم محدوده دلخواه، از دستور /set_range استفاده کنید.\n"
+            "مثال: سوره 1 آیه 1 تا سوره 2 آیه 10."
         )
+        
         return ConversationHandler.END
     except Exception as e:
         logger.error(f"Error in start_khatm_ghoran: {e}")
@@ -469,7 +572,6 @@ async def set_salavat_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted set_salavat_count")
-            await update.message.reply_text("فقط ادمین می‌تواند تعداد صلوات را تنظیم کند.")
             return
 
         salavat_data = context.user_data.pop("awaiting_salavat")

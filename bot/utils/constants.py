@@ -1,4 +1,5 @@
 import logging
+from datetime import time
 
 logger = logging.getLogger(__name__)
 
@@ -13,17 +14,17 @@ DEFAULT_SEPAS_TEXTS = [
 ]
 KHATM_TYPES = ["salavat", "zekr", "ghoran"]
 
-def load_constants():
-    """Load and validate constants."""
-    try:
-        if not DEFAULT_SEPAS_TEXTS:
-            logger.warning("DEFAULT_SEPAS_TEXTS is empty")
-        if TOTAL_QURAN_VERSES <= 0:
-            logger.error("TOTAL_QURAN_VERSES must be positive")
-            raise ValueError("Invalid TOTAL_QURAN_VERSES")
-        logger.info("Constants loaded successfully")
-    except Exception as e:
-        logger.error(f"Failed to load constants: {e}")
-        raise
+DAILY_HADITH_TIME = time(hour=8, minute=0)
+DAILY_RESET_TIME = time(hour=0, minute=0)
+DAILY_PERIOD_RESET_TIME = time(hour=0, minute=5)
+MIN_DELETE_MINUTES = 1
+MAX_DELETE_MINUTES = 1440
+HADITH_CLEAN_PATTERNS = [
+    r'@[A-Za-z0-9_]+',
+    r'(?:http[s]?://|t.me/)[^\s]+'
+]
 
-load_constants()
+MAIN_GROUP_ID = -100123456789
+MAX_MESSAGE_LENGTH = 4096
+TAG_COOLDOWN_HOURS = 24
+TAG_MESSAGE_DELAY = 2

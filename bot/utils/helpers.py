@@ -73,40 +73,44 @@ def format_khatm_message(
     try:
         if khatm_type == "ghoran":
             if not verses:
-                logger.warning("No verses provided for Quran khatm message")
                 return "خطا: اطلاعات آیات موجود نیست."
             
-            # Get current surah name from the first verse
             current_surah = verses[0]['surah_name']
-            
-            # Format verse texts with numbering
-            verse_texts = []
-            for idx, verse in enumerate(verses[:max_display_verses], 1):
-                verse_text = verse.get('text', 'متن آیه موجود نیست')
-                verse_texts.append(f"{idx}: {verse_text}")
+            # سرصفحه پیام
+            parts = [
+                f"نام سوره فعلی: {current_surah}",
+                f"تعداد ختم قرآن انجام شده: {completion_count}",
+                "———————————————————\n",
+            ]
+        
+            for v in verses[:max_display_verses]:
+                verse_no = v.get('id')
+                text = v.get('text', 'متن آیه موجود نیست')
+                parts.append(f"{verse_no}: {text}")
+                parts.append("")  # خط خالی برای فاصله‌گذاری
+
+            # در صورت وجود آیات بیشتر از حد نمایش
             if len(verses) > max_display_verses:
-                verse_texts.append("... (برای آیات بیشتر، محدوده را بررسی کنید)")
-            
-            message = (
-                f"نام سوره فعلی: {current_surah}\n"
-                f"تعداد‌ ختم قرآن انجام شده: {completion_count}\n"
-                f"————————————-\n"
-                f"تعداد آیه سهم شما: {amount} آیه\n"
-                "\n".join(verse_texts) + "\n"
-                f"————————————-\n"
-            )
+                parts.append("... (برای آیات بیشتر، محدوده را بررسی کنید)")
+                parts.append("")
+        
+            # اضافه کردن در انتهای پیام
             if sepas_text:
-                message += f"🌱 متن سپاس 🌱 {sepas_text}\n"
+                parts.append("———————————————————\n")
+                parts.append(f"🌱 {sepas_text} 🌱")
+        
+            # ساخت پیام نهایی با جداکننده خط جدید
+            message = "\n".join(parts)
             logger.debug(f"Formatted Quran khatm message: {message}")
             return message
-
+        
         elif khatm_type == "salavat":
             message = (
                 f"🙏 *{amount} صلوات* ثبت شد!\n"
                 f"جمع کل: {new_total} صلوات\n"
             )
             if sepas_text:
-                message += f"🌱 متن سپاس 🌱 {sepas_text}\n"
+                message += f"🌱 {sepas_text} 🌱\n"
             logger.debug(f"Formatted salavat khatm message: {message}")
             return message
 
@@ -119,7 +123,7 @@ def format_khatm_message(
                 f"جمع کل: {new_total} {zekr_text}\n"
             )
             if sepas_text:
-                message += f"🌱 متن سپاس 🌱 {sepas_text}\n"
+                message += f"🌱 {sepas_text} 🌱\n"
             logger.debug(f"Formatted zekr khatm message: {message}")
             return message
 

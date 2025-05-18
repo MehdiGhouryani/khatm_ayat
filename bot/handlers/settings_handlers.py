@@ -5,15 +5,14 @@ from telegram.ext import ContextTypes
 from bot.database.db import get_db_connection
 from bot.utils.helpers import parse_number
 from bot.handlers.admin_handlers import is_admin
+from telegram.error import BadRequest, Forbidden
 
 logger = logging.getLogger(__name__)
 
 async def reset_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /reset_zekr command to reset zekr or salavat stats."""
     try:
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted /reset_zekr")
-            await update.message.reply_text("فقط ادمین می‌تواند ذکر را ریست کند.")
             return
 
         group_id = update.effective_chat.id
@@ -46,11 +45,9 @@ async def reset_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
 async def reset_kol(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /reset_kol command to reset all khatm stats."""
     try:
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted /reset_kol")
-            await update.message.reply_text("فقط ادمین می‌تواند کل آمار را ریست کند.")
             return
 
         group_id = update.effective_chat.id
@@ -99,7 +96,6 @@ async def set_max(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted /max")
-            await update.message.reply_text("فقط ادمین می‌تواند حداکثر را تنظیم کند.")
             return
 
         if not context.args:
@@ -139,7 +135,6 @@ async def max_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted /max_off")
-            await update.message.reply_text("فقط ادمین می‌تواند حداکثر را غیرفعال کند.")
             return
 
         group_id = update.effective_chat.id
@@ -167,7 +162,6 @@ async def set_min(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted /min")
-            await update.message.reply_text("فقط ادمین می‌تواند حداقل را تنظیم کند.")
             return
 
         if not context.args:
@@ -207,7 +201,6 @@ async def min_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted /min_off")
-            await update.message.reply_text("فقط ادمین می‌تواند حداقل را غیرفعال کند.")
             return
 
         group_id = update.effective_chat.id
@@ -235,7 +228,6 @@ async def sepas_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted /sepas_on")
-            await update.message.reply_text("فقط ادمین می‌تواند متن سپاس را فعال کند.")
             return
 
         group_id = update.effective_chat.id
@@ -258,7 +250,6 @@ async def sepas_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted /sepas_off")
-            await update.message.reply_text("فقط ادمین می‌تواند متن سپاس را غیرفعال کند.")
             return
 
         group_id = update.effective_chat.id
@@ -281,7 +272,6 @@ async def add_sepas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted /addsepas")
-            await update.message.reply_text("فقط ادمین می‌تواند متن سپاس اضافه کند.")
             return
 
         if not context.args:
@@ -306,12 +296,12 @@ async def add_sepas(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error in add_sepas: {e}")
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+
+#region Reset 
 async def reset_daily(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /reset_daily command to enable daily reset."""
     try:
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted /reset_daily")
-            await update.message.reply_text("فقط ادمین می‌تواند ریست روزانه را فعال کند.")
             return
 
         group_id = update.effective_chat.id
@@ -334,7 +324,6 @@ async def reset_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted /reset_off")
-            await update.message.reply_text("فقط ادمین می‌تواند ریست روزانه را غیرفعال کند.")
             return
 
         group_id = update.effective_chat.id
@@ -352,12 +341,129 @@ async def reset_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error in reset_off: {e}")
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+
+
+
+async def reset_daily_groups(context: ContextTypes.DEFAULT_TYPE):
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT group_id FROM groups WHERE reset_daily = 1")
+            groups = [row["group_id"] for row in cursor.fetchall()]
+
+        if not groups:
+            logger.debug("No groups with daily reset enabled")
+            return
+
+        for group_id in groups:
+            try:
+                with get_db_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "DELETE FROM contributions WHERE group_id = ?",
+                        (group_id,)
+                    )
+                    cursor.execute(
+                        "SELECT topic_id, khatm_type FROM topics WHERE group_id = ?",
+                        (group_id,)
+                    )
+                    topics = cursor.fetchall()
+                    for topic in topics:
+                        cursor.execute(
+                            "UPDATE topics SET current_total = 0 WHERE group_id = ? AND topic_id = ?",
+                            (group_id, topic["topic_id"])
+                        )
+                        if topic["khatm_type"] == "ghoran":
+                            cursor.execute(
+                                "SELECT start_verse_id FROM khatm_ranges WHERE group_id = ? AND topic_id = ?",
+                                (group_id, topic["topic_id"])
+                            )
+                            range_result = cursor.fetchone()
+                            if range_result:
+                                cursor.execute(
+                                    "UPDATE topics SET current_verse_id = ? WHERE group_id = ? AND topic_id = ?",
+                                    (range_result["start_verse_id"], group_id, topic["topic_id"])
+                                )
+                    conn.commit()
+                    logger.info(f"Daily reset completed: group_id={group_id}")
+
+                try:
+                    await context.bot.send_message(
+                        chat_id=group_id,
+                        text="آمار روزانه گروه صفر شد."
+                    )
+                except (BadRequest, Forbidden) as e:
+                    logger.error(f"Failed to send reset message to group_id={group_id}: {e}")
+
+            except Exception as e:
+                logger.error(f"Error resetting group_id={group_id}: {e}")
+
+    except Exception as e:
+        logger.error(f"Error in reset_daily_groups: {e}")
+
+async def reset_periodic_topics(context: ContextTypes.DEFAULT_TYPE):
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT group_id, topic_id, khatm_type, current_total, period_number FROM topics WHERE reset_on_period = 1 AND current_total >= period_number"
+            )
+            topics = cursor.fetchall()
+
+        if not topics:
+            logger.debug("No topics eligible for periodic reset")
+            return
+
+        for topic in topics:
+            group_id = topic["group_id"]
+            topic_id = topic["topic_id"]
+            try:
+                with get_db_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "DELETE FROM contributions WHERE group_id = ? AND topic_id = ?",
+                        (group_id, topic_id)
+                    )
+                    cursor.execute(
+                        "UPDATE topics SET current_total = 0, completion_count = completion_count + 1 WHERE group_id = ? AND topic_id = ?",
+                        (group_id, topic_id)
+                    )
+                    if topic["khatm_type"] == "ghoran":
+                        cursor.execute(
+                            "SELECT start_verse_id FROM khatm_ranges WHERE group_id = ? AND topic_id = ?",
+                            (group_id, topic_id)
+                        )
+                        range_result = cursor.fetchone()
+                        if range_result:
+                            cursor.execute(
+                                "UPDATE topics SET current_verse_id = ? WHERE group_id = ? AND topic_id = ?",
+                                (range_result["start_verse_id"], group_id, topic_id)
+                            )
+                    conn.commit()
+                    logger.info(f"Periodic reset completed: group_id={group_id}, topic_id={topic_id}")
+
+                try:
+                    await context.bot.send_message(
+                        chat_id=group_id,
+                        message_thread_id=topic_id if topic_id != group_id else None,
+                        text=f"دوره ختم {topic['khatm_type']} به پایان رسید و دوره جدید شروع شد."
+                    )
+                except (BadRequest, Forbidden) as e:
+                    logger.error(f"Failed to send reset message to group_id={group_id}, topic_id={topic_id}: {e}")
+
+            except Exception as e:
+                logger.error(f"Error resetting group_id={group_id}, topic_id={topic_id}: {e}")
+
+    except Exception as e:
+        logger.error(f"Error in reset_periodic_topics: {e}")
+#endregion
+
+
 async def reset_number_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /reset_number_on command to enable period reset."""
     try:
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted /reset_number_on")
-            await update.message.reply_text("فقط ادمین می‌تواند ریست دوره را فعال کند.")
             return
 
         group_id = update.effective_chat.id
@@ -381,7 +487,6 @@ async def reset_number_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted /reset_number_off")
-            await update.message.reply_text("فقط ادمین می‌تواند ریست دوره را غیرفعال کند.")
             return
 
         group_id = update.effective_chat.id
@@ -405,7 +510,6 @@ async def set_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted /number")
-            await update.message.reply_text("فقط ادمین می‌تواند تعداد دوره را تنظیم کند.")
             return
 
         if not context.args:
@@ -443,7 +547,6 @@ async def number_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted /number_off")
-            await update.message.reply_text("فقط ادمین می‌تواند تعداد دوره را غیرفعال کند.")
             return
 
         group_id = update.effective_chat.id
@@ -462,12 +565,11 @@ async def number_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error in number_off: {e}")
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+
 async def stop_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /stop_on command to stop khatm at a specific number."""
     try:
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted /stop_on")
-            await update.message.reply_text("فقط ادمین می‌تواند توقف ختم را تنظیم کند.")
             return
 
         if not context.args:
@@ -497,12 +599,12 @@ async def stop_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error in stop_on: {e}")
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+
+
 async def stop_on_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /stop_on_off command to disable stop number."""
     try:
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted /stop_on_off")
-            await update.message.reply_text("فقط ادمین می‌تواند توقف ختم را غیرفعال کند.")
             return
 
         group_id = update.effective_chat.id
@@ -521,12 +623,13 @@ async def stop_on_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error in stop_on_off: {e}")
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+
+
 async def time_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /time_off command to set inactive hours."""
     try:
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted /time_off")
-            await update.message.reply_text("فقط ادمین می‌تواند ساعات خاموشی را تنظیم کند.")
             return
 
         if len(context.args) < 2:
@@ -561,7 +664,6 @@ async def time_off_disable(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted /time_off_disable")
-            await update.message.reply_text("فقط ادمین می‌تواند ساعات خاموشی را غیرفعال کند.")
             return
 
         group_id = update.effective_chat.id
@@ -579,12 +681,14 @@ async def time_off_disable(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error in time_off_disable: {e}")
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+
+#region Lock
+
 async def lock_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /lock_on command to enable lock mode."""
+    """Handle lock_on command to enable lock mode."""
     try:
         if not await is_admin(update, context):
-            logger.warning(f"Non-admin user {update.effective_user.id} attempted /lock_on")
-            await update.message.reply_text("فقط ادمین می‌تواند قفل را فعال کند.")
+            logger.warning(f"Non-admin user {update.effective_user.id} attempted lock_on")
             return
 
         group_id = update.effective_chat.id
@@ -597,17 +701,16 @@ async def lock_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conn.commit()
             logger.info(f"Lock enabled: group_id={group_id}")
 
-        await update.message.reply_text("حالت قفل فعال شد. فقط اعداد یا آیات پذیرفته می‌شوند.")
+        await update.message.reply_text("قفل فعال شد. فقط پیام‌های عددی پذیرفته می‌شوند و سایر پیام‌ها حذف خواهند شد.")
     except Exception as e:
         logger.error(f"Error in lock_on: {e}")
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
 async def lock_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /lock_off command to disable lock mode."""
+    """Handle lock_off command to disable lock mode."""
     try:
         if not await is_admin(update, context):
-            logger.warning(f"Non-admin user {update.effective_user.id} attempted /lock_off")
-            await update.message.reply_text("فقط ادمین می‌تواند قفل را غیرفعال کند.")
+            logger.warning(f"Non-admin user {update.effective_user.id} attempted lock_off")
             return
 
         group_id = update.effective_chat.id
@@ -625,23 +728,24 @@ async def lock_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error in lock_off: {e}")
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+#endregion
+
+#region delete
 async def delete_after(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /delete_after command to set message deletion time."""
     try:
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted /delete_after")
-            await update.message.reply_text("فقط ادمین می‌تواند زمان حذف را تنظیم کند.")
             return
 
         if not context.args:
             logger.warning("Delete_after command called without arguments")
-            await update.message.reply_text("لطفاً تعداد دقیقه را وارد کنید. مثال: /delete_after 5")
+            await update.message.reply_text("لطفاً تعداد دقیقه را وارد کنید (۱ تا ۱۴۴۰). مثال: /delete_after 5")
             return
 
         minutes = parse_number(context.args[0])
-        if minutes is None or minutes <= 0:
+        if minutes is None or minutes < 1 or minutes > 1440:
             logger.warning(f"Invalid delete_after minutes: {context.args[0]}")
-            await update.message.reply_text("تعداد دقیقه نامعتبر است.")
+            await update.message.reply_text("تعداد دقیقه باید بین ۱ تا ۱۴۴۰ باشد.")
             return
 
         group_id = update.effective_chat.id
@@ -654,17 +758,15 @@ async def delete_after(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conn.commit()
             logger.info(f"Delete after set: group_id={group_id}, minutes={minutes}")
 
-        await update.message.reply_text(f"پیام‌ها پس از {minutes} دقیقه حذف می‌شوند.")
+        await update.message.reply_text(f"پیام‌های غیرادمین پس از {minutes} دقیقه حذف می‌شوند.")
     except Exception as e:
         logger.error(f"Error in delete_after: {e}")
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
 async def delete_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /delete_off command to disable message deletion."""
     try:
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted /delete_off")
-            await update.message.reply_text("فقط ادمین می‌تواند حذف پیام را غیرفعال کند.")
             return
 
         group_id = update.effective_chat.id
@@ -682,12 +784,67 @@ async def delete_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error in delete_off: {e}")
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+async def handle_new_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        if not update.message or not update.effective_chat:
+            logger.debug("Invalid message or chat in handle_new_message")
+            return
+
+        group_id = update.effective_chat.id
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT delete_after FROM groups WHERE group_id = ?", (group_id,))
+            result = cursor.fetchone()
+            if not result or result["delete_after"] == 0:
+                return
+
+        if await is_admin(update, context):
+            logger.debug(f"Message from admin skipped: user_id={update.effective_user.id}")
+            return
+
+        minutes = result["delete_after"]
+        context.job_queue.run_once(
+            delete_message,
+            minutes * 60,
+            data={
+                "chat_id": group_id,
+                "message_id": update.message.message_id,
+                "message_thread_id": update.message.message_thread_id
+            },
+            name=f"delete_message_{group_id}_{update.message.message_id}"
+        )
+        logger.debug(f"Scheduled deletion: group_id={group_id}, message_id={update.message.message_id}, after={minutes} minutes")
+
+    except Exception as e:
+        logger.error(f"Error in handle_new_message: {e}")
+
+async def delete_message(context: ContextTypes.DEFAULT_TYPE):
+    try:
+        job = context.job
+        chat_id = job.data["chat_id"]
+        message_id = job.data["message_id"]
+        message_thread_id = job.data.get("message_thread_id")
+
+        await context.bot.delete_message(
+            chat_id=chat_id,
+            message_id=message_id,
+            message_thread_id=message_thread_id
+        )
+        logger.info(f"Message deleted: chat_id={chat_id}, message_id={message_id}")
+
+    except (BadRequest, Forbidden) as e:
+        logger.debug(f"Failed to delete message: chat_id={chat_id}, message_id={message_id}, error={e}")
+    except Exception as e:
+        logger.error(f"Error in delete_message: {e}")
+#endregion
+
+
+
 async def jam_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /jam_on command to enable showing total in messages."""
     try:
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted /jam_on")
-            await update.message.reply_text("فقط ادمین می‌تواند نمایش جمع را فعال کند.")
             return
 
         group_id = update.effective_chat.id
@@ -710,7 +867,6 @@ async def jam_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted /jam_off")
-            await update.message.reply_text("فقط ادمین می‌تواند نمایش جمع را غیرفعال کند.")
             return
 
         group_id = update.effective_chat.id
@@ -733,7 +889,6 @@ async def set_completion_message(update: Update, context: ContextTypes.DEFAULT_T
     try:
         if not await is_admin(update, context):
             logger.warning(f"Non-admin user {update.effective_user.id} attempted /set_completion_message")
-            await update.message.reply_text("فقط ادمین می‌تواند پیام تبریک را تنظیم کند.")
             return
 
         if not context.args:
