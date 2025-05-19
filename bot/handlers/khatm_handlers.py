@@ -1,26 +1,21 @@
-# khatm_handlers.py
 import logging
 import re
 from telegram import Update
 from telegram.ext import ContextTypes
-from telegram.error import BadRequest
-from bot.database.db import get_db_connection
-from bot.services.khatm_service import process_khatm_number
+from telegram.error import TimedOut, BadRequest
+from bot.database.db import get_db_connection, write_queue
 from bot.utils.helpers import parse_number, format_khatm_message, get_random_sepas
-from bot.handlers.admin_handlers import is_admin
+from bot.handlers.admin_handlers import is_admin, TEXT_COMMANDS
 from bot.utils.quran import QuranManager
-from bot.handlers.admin_handlers import TEXT_COMMANDS
-
+import asyncio
 logger = logging.getLogger(__name__)
-
 quran = QuranManager()
 
-
-
 async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle khatm-related messages for salavat, zekr, or Quran contributions."""
     try:
         if not update.effective_chat or update.effective_chat.type not in ["group", "supergroup"]:
-            logger.debug("Message received in non-group chat")
+            logger.debug("Message received in non-group chat: user_id=%s", update.effective_user.id)
             return
 
         group_id = update.effective_chat.id
@@ -31,7 +26,7 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
         # Step 1: Check if the message is a 'start' command or its aliases
         start_command_info = TEXT_COMMANDS.get("start")
         if start_command_info and (text == "start" or raw_text in start_command_info["aliases"]):
-            logger.debug(f"Processing 'start' command: group_id={group_id}, text={raw_text}")
+            logger.debug("Processing 'start' command: group_id=%s, text=%s", group_id, raw_text)
             if start_command_info["admin_only"] and not await is_admin(update, context):
                 await update.message.reply_text("فقط ادمین می‌تواند این دستور را اجرا کند.")
                 return
@@ -40,11 +35,14 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
             await start_command_info["handler"](update, context)
             return
 
-        # Step 2: Proceed with group and topic checks for other messages
+        # Step 2: Check group and topic status
         with get_db_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT is_active, lock_enabled, min_number, max_number, max_display_verses FROM groups WHERE group_id = ?",
+                """
+                SELECT is_active, lock_enabled, min_number, max_number, max_display_verses 
+                FROM groups WHERE group_id = ?
+                """,
                 (group_id,)
             )
             group = cursor.fetchone()
@@ -56,7 +54,11 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 return
 
             cursor.execute(
-                "SELECT khatm_type, current_total, zekr_text, min_ayat, max_ayat, period_number, stop_number, completion_message, current_verse_id, is_active, completion_count FROM topics WHERE topic_id = ? AND group_id = ?",
+                """
+                SELECT khatm_type, current_total, zekr_text, min_ayat, max_ayat, period_number, 
+                       stop_number, completion_message, current_verse_id, is_active, completion_count 
+                FROM topics WHERE topic_id = ? AND group_id = ?
+                """,
                 (topic_id, group_id)
             )
             topic = cursor.fetchone()
@@ -64,13 +66,14 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 await update.message.reply_text("تاپیک ختم تنظیم نشده است. از /topic یا 'تاپیک' استفاده کنید.")
                 return
             if not topic["is_active"]:
-                await update.message.reply_text("این تاپیک ختم غیرفعال است.")
+                await update.message.reply_text("این تاپیک ختم غیرفعال است. لطفاً از /khatm_zekr، /khatm_salavat یا /khatm_ghoran برای فعال‌سازی ختم استفاده کنید.")
                 return
 
             user_id = update.effective_user.id
             username = update.effective_user.username or update.effective_user.first_name
             first_name = update.effective_user.first_name
 
+            # Insert or update user information
             cursor.execute(
                 """
                 INSERT OR IGNORE INTO users (user_id, group_id, topic_id, username, first_name)
@@ -83,7 +86,7 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
             if group["lock_enabled"]:
                 command_found = False
                 for command, info in TEXT_COMMANDS.items():
-                    if command == "start":  # Skip start, already handled
+                    if command == "start":
                         continue
                     if text == command or raw_text in info["aliases"]:
                         command_found = True
@@ -94,8 +97,8 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                                     message_id=update.message.message_id,
                                     message_thread_id=topic_id if update.message.message_thread_id else None
                                 )
-                            except BadRequest:
-                                pass
+                            except BadRequest as e:
+                                logger.debug("Failed to delete message: %s", e)
                             return
                         args = raw_text.split()[1:] if len(raw_text.split()) > 1 else []
                         context.args = args
@@ -110,53 +113,47 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                             message_id=update.message.message_id,
                             message_thread_id=topic_id if update.message.message_thread_id else None
                         )
-                    except BadRequest:
-                        pass
+                    except BadRequest as e:
+                        logger.debug("Failed to delete message: %s", e)
                     return
 
-                if number < 0 and await is_admin(update, context):
-                    context.args = [str(abs(number))]
-                    await subtract_khatm(update, context)
-                    return
-
-            # Step 4: Skip processing if awaiting zekr or salavat input
+            # Step 4: Handle awaiting states for zekr or salavat
             if context.user_data.get("awaiting_zekr") or context.user_data.get("awaiting_salavat"):
-                return
+                if await is_admin(update, context):
+                    for command, info in TEXT_COMMANDS.items():
+                        if text == command or raw_text in info["aliases"]:
+                            args = raw_text.split()[1:] if len(raw_text.split()) > 1 else []
+                            context.args = args
+                            await info["handler"](update, context)
+                            return
+
+                if context.user_data.get("awaiting_zekr"):
+                    from bot.handlers.admin_handlers import set_zekr_text
+                    await set_zekr_text(update, context)
+                    return
+                elif context.user_data.get("awaiting_salavat"):
+                    from bot.handlers.admin_handlers import set_salavat_count
+                    await set_salavat_count(update, context)
+                    return
 
             # Step 5: Handle commands when lock is disabled
             if not group["lock_enabled"]:
-                command_found = False
                 for command, info in TEXT_COMMANDS.items():
-                    if command == "start":  # Skip start, already handled
+                    if command == "start":
                         continue
                     if text == command or raw_text in info["aliases"]:
-                        command_found = True
                         if info["admin_only"] and not await is_admin(update, context):
-                            await update.message.reply_text("فقط ادمین می‌تواند این دستور را اجرا کند.")
                             return
                         args = raw_text.split()[1:] if len(raw_text.split()) > 1 else []
                         context.args = args
                         await info["handler"](update, context)
                         return
 
-                number = parse_number(raw_text)
-                if number is None:
-                    if topic["khatm_type"] == "ghoran":
-                        return
-                    await update.message.reply_text("لطفاً یک عدد معتبر یا دستور معتبر (مثل 'راهنما' یا /help) وارد کنید.")
-                    return
-
-                if number < 0 and await is_admin(update, context):
-                    context.args = [str(abs(number))]
-                    await subtract_khatm(update, context)
-                    return
-
             # Step 6: Process number input
             number = parse_number(raw_text)
             if number is None:
                 if topic["khatm_type"] == "ghoran":
                     return
-                await update.message.reply_text("لطفاً یک عدد معتبر یا دستور معتبر (مثل 'راهنما' یا /help) وارد کنید.")
                 return
 
             if number <= 0:
@@ -173,7 +170,10 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                     return
 
                 cursor.execute(
-                    "SELECT start_verse_id, end_verse_id FROM khatm_ranges WHERE group_id = ? AND topic_id = ?",
+                    """
+                    SELECT start_verse_id, end_verse_id 
+                    FROM khatm_ranges WHERE group_id = ? AND topic_id = ?
+                    """,
                     (group_id, topic_id)
                 )
                 range_result = cursor.fetchone()
@@ -197,34 +197,24 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                     return
 
                 for verse in verses:
-                    cursor.execute(
-                        """
-                        INSERT INTO contributions (group_id, topic_id, user_id, amount, verse_id)
-                        VALUES (?, ?, ?, ?, ?)
-                        """,
-                        (group_id, topic_id, user_id, 1, verse['id'])
-                    )
-                cursor.execute(
-                    "UPDATE users SET total_ayat = total_ayat + ? WHERE user_id = ? AND group_id = ? AND topic_id = ?",
-                    (assigned_number, user_id, group_id, topic_id)
-                )
-                cursor.execute(
-                    "UPDATE topics SET current_verse_id = ? WHERE topic_id = ? AND group_id = ?",
-                    (end_assign_id + 1, topic_id, group_id)
-                )
+                    request = {
+                        "type": "contribution",
+                        "group_id": group_id,
+                        "topic_id": topic_id,
+                        "user_id": user_id,
+                        "amount": 1,
+                        "verse_id": verse['id'],
+                        "khatm_type": "ghoran",
+                        "current_verse_id": end_assign_id + 1,
+                        "completed": end_assign_id >= end_verse_id,
+                    }
+                    await write_queue.put(request)
+                    logger.debug("Queued contribution: group_id=%s, topic_id=%s, verse_id=%d",
+                                group_id, topic_id, verse['id'])
 
-                previous_total, new_total, completed = process_khatm_number(
-                    group_id, topic_id, assigned_number, topic["khatm_type"], topic["current_total"], conn
-                )
-
-                if end_assign_id >= end_verse_id:
-                    completed = True
-                    cursor.execute(
-                        "UPDATE topics SET is_active = 0, completion_count = completion_count + 1 WHERE topic_id = ? AND group_id = ?",
-                        (topic_id, group_id)
-                    )
-
-                conn.commit()
+                previous_total = topic["current_total"]
+                new_total = previous_total + assigned_number
+                completed = end_assign_id >= end_verse_id
 
                 sepas_text = get_random_sepas(group_id, conn)
                 message = format_khatm_message(
@@ -239,11 +229,23 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                     completion_count=topic["completion_count"]
                 )
 
-                await update.message.reply_text(message)
+                try:
+                    await update.message.reply_text(message)
+                except TimedOut:
+                    logger.warning("Timed out sending message for group_id=%s, topic_id=%s, retrying once",
+                                  group_id, topic_id)
+                    await asyncio.sleep(2)
+                    await update.message.reply_text(message)
 
                 if completed:
                     completion_message = topic["completion_message"] or "تبریک! ختم قرآن کامل شد. برای ختم جدید، محدوده را با /set_range یا 'تنظیم محدوده' تنظیم کنید."
-                    await update.message.reply_text(completion_message)
+                    try:
+                        await update.message.reply_text(completion_message)
+                    except TimedOut:
+                        logger.warning("Timed out sending completion message for group_id=%s, topic_id=%s",
+                                      group_id, topic_id)
+                        await asyncio.sleep(2)
+                        await update.message.reply_text(completion_message)
 
             # Step 8: Handle salavat or zekr khatm
             else:
@@ -251,9 +253,22 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                     await update.message.reply_text(f"عدد باید بین {group['min_number']} و {group['max_number']} باشد.")
                     return
 
-                previous_total, new_total, completed = process_khatm_number(
-                    group_id, topic_id, number, topic["khatm_type"], topic["current_total"], conn
-                )
+                request = {
+                    "type": "contribution",
+                    "group_id": group_id,
+                    "topic_id": topic_id,
+                    "user_id": user_id,
+                    "amount": number,
+                    "khatm_type": topic["khatm_type"],
+                    "completed": topic["stop_number"] > 0 and topic["current_total"] + number >= topic["stop_number"],
+                }
+                await write_queue.put(request)
+                logger.debug("Queued contribution: group_id=%s, topic_id=%s, amount=%d",
+                           group_id, topic_id, number)
+
+                previous_total = topic["current_total"]
+                new_total = previous_total + number
+                completed = request["completed"]
 
                 sepas_text = get_random_sepas(group_id, conn)
                 message = format_khatm_message(
@@ -267,59 +282,54 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                     completion_count=topic["completion_count"]
                 )
 
-                if topic["khatm_type"] == "zekr":
-                    cursor.execute(
-                        "UPDATE users SET total_zekr = total_zekr + ? WHERE user_id = ? AND group_id = ? AND topic_id = ?",
-                        (number, user_id, group_id, topic_id)
-                    )
-                else:
-                    cursor.execute(
-                        "UPDATE users SET total_salavat = total_salavat + ? WHERE user_id = ? AND group_id = ? AND topic_id = ?",
-                        (number, user_id, group_id, topic_id)
-                    )
-                cursor.execute(
-                    """
-                    INSERT INTO contributions (group_id, topic_id, user_id, amount)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (group_id, topic_id, user_id, number)
-                )
-                conn.commit()
-
-                await update.message.reply_text(message, parse_mode="Markdown")
+                try:
+                    await update.message.reply_text(message, parse_mode="Markdown")
+                except TimedOut:
+                    logger.warning("Timed out sending message for group_id=%s, topic_id=%s, retrying once",
+                                  group_id, topic_id)
+                    await asyncio.sleep(2)
+                    await update.message.reply_text(message, parse_mode="Markdown")
 
                 if completed:
                     completion_message = topic["completion_message"] or f"تبریک! ختم {topic['khatm_type']} کامل شد."
-                    await update.message.reply_text(completion_message)
+                    try:
+                        await update.message.reply_text(completion_message)
+                    except TimedOut:
+                        logger.warning("Timed out sending completion message for group_id=%s, topic_id=%s",
+                                      group_id, topic_id)
+                        await asyncio.sleep(2)
+                        await update.message.reply_text(completion_message)
 
-                if topic["stop_number"] > 0 and new_total >= topic["stop_number"]:
-                    cursor.execute(
-                        "UPDATE topics SET is_active = 0, completion_count = completion_count + 1 WHERE topic_id = ? AND group_id = ?",
-                        (topic_id, group_id)
-                    )
-                    conn.commit()
-                    completion_message = topic["completion_message"] or f"ختم در تعداد {topic['stop_number']} متوقف شد."
-                    await update.message.reply_text(completion_message)
-
+    except TimedOut:
+        logger.error("Timed out error in handle_khatm_message: group_id=%s, topic_id=%s, user_id=%s",
+                    group_id, topic_id, update.effective_user.id, exc_info=True)
+        return
     except Exception as e:
-        logger.error(f"Error in handle_khatm_message: {e}", exc_info=True)
-        await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید یا با ادمین تماس بگیرید.")
-
+        logger.error("Error in handle_khatm_message: %s, group_id=%s, topic_id=%s, user_id=%s",
+                    e, group_id, topic_id, update.effective_user.id, exc_info=True)
+        try:
+            await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید یا با ادمین تماس بگیرید.")
+        except TimedOut:
+            logger.warning("Timed out sending error message for group_id=%s, topic_id=%s",
+                          group_id, topic_id)
 
 async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle subtraction of khatm contributions by admin (e.g., -100 or subtract 100)."""
+    """Handle subtraction of khatm contributions by admin."""
     try:
         if not update.effective_chat or update.effective_chat.type not in ["group", "supergroup"]:
-            logger.debug("Subtract command received in non-group chat")
+            logger.debug("Subtract command in non-group chat: user_id=%s", update.effective_user.id)
             return
 
         group_id = update.effective_chat.id
         topic_id = update.message.message_thread_id or group_id
         raw_text = update.message.text.strip()
-        logger.debug(f"Processing subtract command: group_id={group_id}, topic_id={topic_id}, text={raw_text}")
+        logger.debug("Processing subtract command: group_id=%s, topic_id=%s, text=%s",
+                   group_id, topic_id, raw_text)
 
         if not await is_admin(update, context):
-            logger.warning(f"Non-admin user {update.effective_user.id} attempted subtract command: {raw_text}")
+            logger.warning("Non-admin user %s attempted subtract command: %s",
+                         update.effective_user.id, raw_text)
+            await update.message.reply_text("فقط ادمین می‌تواند مشارکت را کاهش دهد.")
             return
 
         number = None
@@ -328,39 +338,43 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if number is None:
             number = parse_number(raw_text)
         if number is None or number == 0:
-            logger.debug(f"Invalid number for subtract: {raw_text}")
-            await update.message.reply_text("لطفاً یک عدد معتبر وارد کنید (مثال: -100 یا subtract 100).")
+            logger.debug("Invalid number for subtract: %s, group_id=%s", raw_text, group_id)
+            await update.message.reply_text("لطفاً یک عدد معتبر وارد کنید (مثال: -100 یا /subtract 100).")
             return
 
-        number = -abs(number)
-        max_subtract_ayat = 20 
-        if topic and topic["khatm_type"] == "ghoran":
-            number = max(number, -max_subtract_ayat) 
+        number = -abs(number)  # Ensure number is negative
 
         with get_db_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT is_active, max_display_verses FROM groups WHERE group_id = ?",
+                """
+                SELECT is_active, max_display_verses 
+                FROM groups WHERE group_id = ?
+                """,
                 (group_id,)
             )
             group = cursor.fetchone()
             if not group or not group["is_active"]:
-                logger.debug(f"Group not found or inactive: group_id={group_id}")
+                logger.debug("Group not found or inactive: group_id=%s", group_id)
                 await update.message.reply_text("گروه فعال نیست. از /start یا 'شروع' استفاده کنید.")
                 return
 
             cursor.execute(
-                "SELECT khatm_type, current_total, zekr_text, min_ayat, max_ayat, current_verse_id, completion_count FROM topics WHERE topic_id = ? AND group_id = ?",
+                """
+                SELECT khatm_type, current_total, zekr_text, min_ayat, max_ayat, 
+                       current_verse_id, completion_count, is_active
+                FROM topics WHERE topic_id = ? AND group_id = ?
+                """,
                 (topic_id, group_id)
             )
             topic = cursor.fetchone()
             if not topic:
-                logger.debug(f"No topic found for topic_id={topic_id}")
+                logger.debug("No topic found: topic_id=%s, group_id=%s", topic_id, group_id)
                 await update.message.reply_text("تاپیک ختم تنظیم نشده است. از /topic یا 'تاپیک' استفاده کنید.")
                 return
             if not topic["is_active"]:
-                logger.debug(f"Topic is not active: topic_id={topic_id}")
-                await update.message.reply_text("این تاپیک ختم غیرفعال است.")
+                logger.debug("Topic is not active: topic_id=%s", topic_id)
+                await update.message.reply_text("این تاپیک ختم غیرفعال است. لطفاً از /khatm_zekr، /khatm_salavat یا /khatm_ghoran برای فعال‌سازی ختم استفاده کنید.")
                 return
 
             user_id = update.effective_user.id
@@ -368,12 +382,16 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             first_name = update.effective_user.first_name
 
             if topic["current_total"] + number < 0:
-                logger.warning(f"Cannot subtract {number}: current_total={topic['current_total']} would become negative")
+                logger.warning("Cannot subtract %d: current_total=%d would become negative, group_id=%s",
+                             number, topic["current_total"], group_id)
                 await update.message.reply_text("مقدار کسر بیشتر از مجموع فعلی است.")
                 return
 
             cursor.execute(
-                "SELECT total_salavat, total_zekr, total_ayat FROM users WHERE user_id = ? AND group_id = ? AND topic_id = ?",
+                """
+                SELECT total_salavat, total_zekr, total_ayat 
+                FROM users WHERE user_id = ? AND group_id = ? AND topic_id = ?
+                """,
                 (user_id, group_id, topic_id)
             )
             user = cursor.fetchone()
@@ -383,72 +401,68 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 user["total_ayat"]
             )
             if user_total + number < 0:
-                logger.warning(f"Cannot subtract {number}: user_total={user_total} would become negative")
+                logger.warning("Cannot subtract %d: user_total=%d would become negative, user_id=%s",
+                             number, user_total, user_id)
                 await update.message.reply_text("مقدار کسر بیشتر از مشارکت کاربر است.")
                 return
 
             verses = None
             new_verse_id = None
             if topic["khatm_type"] == "ghoran":
+                max_subtract_ayat = 20
+                number = max(number, -max_subtract_ayat)
                 cursor.execute(
-                    "SELECT start_verse_id, end_verse_id FROM khatm_ranges WHERE group_id = ? AND topic_id = ?",
+                    """
+                    SELECT start_verse_id, end_verse_id 
+                    FROM khatm_ranges WHERE group_id = ? AND topic_id = ?
+                    """,
                     (group_id, topic_id)
                 )
                 range_result = cursor.fetchone()
                 if not range_result:
-                    logger.debug(f"No khatm range defined for topic_id={topic_id}")
+                    logger.debug("No khatm range defined: topic_id=%s, group_id=%s", topic_id, group_id)
                     await update.message.reply_text("محدوده ختم تعریف نشده است.")
                     return
                 start_verse_id, end_verse_id = range_result
 
                 verses_to_remove = min(abs(number), max_subtract_ayat)
-                number = -verses_to_remove 
+                number = -verses_to_remove
                 current_verse_id = topic["current_verse_id"]
                 new_verse_id = max(start_verse_id, current_verse_id - verses_to_remove)
-                cursor.execute(
-                    """
-                    DELETE FROM contributions
-                    WHERE group_id = ? AND topic_id = ? AND verse_id >= ? AND verse_id < ?
-                    """,
-                    (group_id, topic_id, new_verse_id, current_verse_id)
-                )
 
-                cursor.execute(
-                    "UPDATE topics SET current_verse_id = ? WHERE topic_id = ? AND group_id = ?",
-                    (new_verse_id, topic_id, group_id)
-                )
-
-                cursor.execute(
-                    "UPDATE users SET total_ayat = total_ayat + ? WHERE user_id = ? AND group_id = ? AND topic_id = ?",
-                    (number, user_id, group_id, topic_id)
-                )
+                request = {
+                    "type": "contribution",
+                    "group_id": group_id,
+                    "topic_id": topic_id,
+                    "user_id": user_id,
+                    "amount": number,
+                    "verse_id": new_verse_id,
+                    "khatm_type": "ghoran",
+                    "current_verse_id": new_verse_id,
+                    "completed": False,
+                }
+                await write_queue.put(request)
+                logger.debug("Queued subtract contribution: group_id=%s, topic_id=%s, amount=%d",
+                           group_id, topic_id, number)
 
                 verses = quran.get_verses_in_range(new_verse_id, current_verse_id - 1) if number < 0 else []
 
-            else: 
-                if topic["khatm_type"] == "zekr":
-                    cursor.execute(
-                        "UPDATE users SET total_zekr = total_zekr + ? WHERE user_id = ? AND group_id = ? AND topic_id = ?",
-                        (number, user_id, group_id, topic_id)
-                    )
-                else: 
-                    cursor.execute(
-                        "UPDATE users SET total_salavat = total_salavat + ? WHERE user_id = ? AND group_id = ? AND topic_id = ?",
-                        (number, user_id, group_id, topic_id)
-                    )
-            cursor.execute(
-                """
-                INSERT INTO contributions (group_id, topic_id, user_id, amount, verse_id)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (group_id, topic_id, user_id, number, new_verse_id if topic["khatm_type"] == "ghoran" else None)
-            )
+            else:
+                request = {
+                    "type": "contribution",
+                    "group_id": group_id,
+                    "topic_id": topic_id,
+                    "user_id": user_id,
+                    "amount": number,
+                    "khatm_type": topic["khatm_type"],
+                    "completed": False,
+                }
+                await write_queue.put(request)
+                logger.debug("Queued subtract contribution: group_id=%s, topic_id=%s, amount=%d",
+                           group_id, topic_id, number)
 
-            previous_total, new_total, completed = process_khatm_number(
-                group_id, topic_id, number, topic["khatm_type"], topic["current_total"], conn
-            )
-
-            conn.commit()
+            previous_total = topic["current_total"]
+            new_total = previous_total + number
 
             sepas_text = get_random_sepas(group_id, conn)
             message = format_khatm_message(
@@ -458,127 +472,187 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 new_total,
                 sepas_text,
                 group_id,
-                topic["zekr_text"] if topic["khatm_type"] != "ghoran" else None,
-                verses=verses if topic["khatm_type"] == "ghoran" else None,
+                topic["zekr_text"] if topic["khatm_type"] in ["zekr", "salavat"] else None,
+                verses=verses,
                 max_display_verses=group["max_display_verses"],
                 completion_count=topic["completion_count"]
             )
 
-            await update.message.reply_text(message, parse_mode="Markdown")
-            logger.info(f"Subtracted {number} from {topic['khatm_type']}: group_id={group_id}, topic_id={topic_id}, user_id={user_id}")
+            try:
+                await update.message.reply_text(message, parse_mode="Markdown")
+            except TimedOut:
+                logger.warning("Timed out sending subtract message for group_id=%s, topic_id=%s, retrying once",
+                              group_id, topic_id)
+                await asyncio.sleep(2)
+                await update.message.reply_text(message, parse_mode="Markdown")
 
-            if topic["khatm_type"] == "ghoran" and abs(number) > 0:
-                verse_info = quran.get_verse_info(new_verse_id)
-                surah_name = verse_info.get("surah_name", "نامشخص")
-                verse_number = verse_info.get("verse_number", new_verse_id)
-                await update.message.reply_text(
-                    f"20 آیه به عقب برگشتیم، اکنون در آیه {verse_number} سوره {surah_name} هستیم.",
-                    parse_mode="Markdown"
-                )
-
+    except TimedOut:
+        logger.error("Timed out error in subtract_khatm: group_id=%s, topic_id=%s, user_id=%s",
+                    group_id, topic_id, update.effective_user.id, exc_info=True)
+        return
     except Exception as e:
-        logger.error(f"Error in subtract_khatm: {e}", exc_info=True)
-        await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید یا با ادمین تماس بگیرید.")
-
-
-
+        logger.error("Error in subtract_khatm: %s, group_id=%s, topic_id=%s, user_id=%s",
+                    e, group_id, topic_id, update.effective_user.id, exc_info=True)
+        try:
+            await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید یا با ادمین تماس بگیرید.")
+        except TimedOut:
+            logger.warning("Timed out sending error message for group_id=%s, topic_id=%s",
+                          group_id, topic_id)
 
 async def start_from(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Set the starting number for a khatm (admin only) using write_queue."""
     try:
         if not update.effective_chat or update.effective_chat.type not in ["group", "supergroup"]:
+            logger.debug("Start_from command in non-group chat: user_id=%s", update.effective_user.id)
             return
 
         group_id = update.effective_chat.id
         topic_id = update.message.message_thread_id or group_id
-        args = context.args
+        logger.debug("Processing start_from command: group_id=%s, topic_id=%s", group_id, topic_id)
 
         if not await is_admin(update, context):
-            await update.message.reply_text("فقط ادمین می‌تواند این دستور را اجرا کند.")
+            logger.warning("Non-admin user %s attempted start_from command", update.effective_user.id)
+            await update.message.reply_text("فقط ادمین می‌تواند ختم را از عدد دلخواه شروع کند.")
             return
 
-        if not args:
-            await update.message.reply_text("لطفاً عدد شروع را وارد کنید (مثال: start from 1234 یا start from 1234 surah 2 ayah 10 برای قرآن).")
+        if not context.args:
+            logger.debug("No number provided for start_from: group_id=%s", group_id)
+            await update.message.reply_text("لطفاً یک عدد معتبر وارد کنید (مثال: /start_from 1000).")
             return
 
-        number = parse_number(args[0])
+        number = parse_number(context.args[0])
         if number is None or number < 0:
-            await update.message.reply_text("لطفاً یک عدد معتبر و مثبت وارد کنید.")
+            logger.debug("Invalid number for start_from: %s, group_id=%s", context.args[0], group_id)
+            await update.message.reply_text("لطفاً یک عدد معتبر و غیرمنفی وارد کنید (مثال: /start_from 1000).")
             return
 
         with get_db_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT is_active FROM groups WHERE group_id = ?",
+                """
+                SELECT is_active FROM groups WHERE group_id = ?
+                """,
                 (group_id,)
             )
             group = cursor.fetchone()
             if not group or not group["is_active"]:
+                logger.debug("Group not found or inactive: group_id=%s", group_id)
                 await update.message.reply_text("گروه فعال نیست. از /start یا 'شروع' استفاده کنید.")
                 return
 
             cursor.execute(
-                "SELECT khatm_type, is_active, zekr_text, completion_count FROM topics WHERE topic_id = ? AND group_id = ?",
+                """
+                SELECT khatm_type, current_total, completion_count, is_active
+                FROM topics WHERE topic_id = ? AND group_id = ?
+                """,
                 (topic_id, group_id)
             )
             topic = cursor.fetchone()
             if not topic:
+                logger.debug("No topic found: topic_id=%s, group_id=%s", topic_id, group_id)
                 await update.message.reply_text("تاپیک ختم تنظیم نشده است. از /topic یا 'تاپیک' استفاده کنید.")
                 return
             if not topic["is_active"]:
-                await update.message.reply_text("این تاپیک ختم غیرفعال است.")
+                logger.debug("Topic is not active: topic_id=%s", topic_id)
+                await update.message.reply_text("این تاپیک ختم غیرفعال است. لطفاً از /khatm_zekr، /khatm_salavat یا /khatm_ghoran برای فعال‌سازی ختم استفاده کنید.")
                 return
 
             if topic["khatm_type"] == "ghoran":
-                if len(args) < 5 or args[1].lower() != "surah" or args[3].lower() != "ayah":
-                    await update.message.reply_text("برای قرآن، لطفاً سوره و آیه را مشخص کنید (مثال: start from 1234 surah 2 ayah 10).")
-                    return
-                surah = parse_number(args[2])
-                ayah = parse_number(args[4])
-                if not (1 <= surah <= 114):
-                    await update.message.reply_text("شماره سوره باید بین ۱ تا ۱۱۴ باشد.")
-                    return
-                verse = quran.get_verse(surah, ayah)
-                if not verse:
-                    await update.message.reply_text(f"آیه {ayah} سوره {surah} وجود ندارد.")
-                    return
-                cursor.execute(
-                    "SELECT start_verse_id, end_verse_id FROM khatm_ranges WHERE group_id = ? AND topic_id = ?",
-                    (group_id, topic_id)
-                )
-                range_result = cursor.fetchone()
-                if not range_result:
-                    await update.message.reply_text("محدوده ختم تعریف نشده است. از /set_range استفاده کنید.")
-                    return
-                start_verse_id, end_verse_id = range_result
-                if not (start_verse_id <= verse['id'] <= end_verse_id):
-                    await update.message.reply_text("آیه انتخاب‌شده خارج از محدوده ختم است.")
-                    return
-                cursor.execute(
-                    "UPDATE topics SET current_total = ?, current_verse_id = ? WHERE topic_id = ? AND group_id = ?",
-                    (number, verse['id'], topic_id, group_id)
-                )
-            else:
-                cursor.execute(
-                    "UPDATE topics SET current_total = ? WHERE topic_id = ? AND group_id = ?",
-                    (number, topic_id, group_id)
-                )
+                logger.debug("Start_from not supported for Quran khatm: topic_id=%s", topic_id)
+                await update.message.reply_text("دستور /start_from برای ختم قرآن پشتیبانی نمی‌شود. از /set_range استفاده کنید.")
+                return
 
-            conn.commit()
+        request = {
+            "type": "start_from",
+            "group_id": group_id,
+            "topic_id": topic_id,
+            "number": number,
+            "khatm_type": topic["khatm_type"]
+        }
+        await write_queue.put(request)
+        logger.info("Khatm start_from queued: topic_id=%s, group_id=%s, number=%d", topic_id, group_id, number)
 
-            if topic["khatm_type"] == "ghoran":
-                verse_info = quran.get_verse_info(verse['id'])
-                surah_name = verse_info.get("surah_name", "نامشخص")
-                verse_number = verse_info.get("verse_number", verse['id'])
-                await update.message.reply_text(
-                    f"ختم قرآن از آیه {verse_number} سوره {surah_name} با مجموع {number} شروع شد.",
-                    parse_mode="Markdown"
-                )
-            else:
-                khatm_name = "صلوات" if topic["khatm_type"] == "salavat" else topic["zekr_text"]
-                await update.message.reply_text(
-                    f"ختم {khatm_name} از {number} شروع شد.",
-                    parse_mode="Markdown"
-                )
+        try:
+            await update.message.reply_text(
+                f"ختم {topic['khatm_type']} از عدد {number} شروع شد.",
+                parse_mode="Markdown"
+            )
+        except TimedOut:
+            logger.warning("Timed out sending start_from message for group_id=%s, topic_id=%s, retrying once",
+                          group_id, topic_id)
+            await asyncio.sleep(2)
+            await update.message.reply_text(
+                f"ختم {topic['khatm_type']} از عدد {number} شروع شد.",
+                parse_mode="Markdown"
+            )
 
+    except TimedOut:
+        logger.error("Timed out error in start_from: group_id=%s, topic_id=%s, user_id=%s",
+                    group_id, topic_id, update.effective_user.id, exc_info=True)
+        return
     except Exception as e:
-        await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید یا با ادمین تماس بگیرید.")
+        logger.error("Error in start_from: %s, group_id=%s, topic_id=%s, user_id=%s",
+                    e, group_id, topic_id, update.effective_user.id, exc_info=True)
+        try:
+            await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید یا با ادمین تماس بگیرید.")
+        except TimedOut:
+            logger.warning("Timed out sending error message for group_id=%s, topic_id=%s",
+                          group_id, topic_id)
+
+async def khatm_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show current khatm status."""
+    try:
+        group_id = update.effective_chat.id
+        topic_id = update.message.message_thread_id or group_id
+
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT khatm_type, is_active, current_total, zekr_text, stop_number
+                FROM topics
+                WHERE group_id = ? AND topic_id = ?
+                """,
+                (group_id, topic_id)
+            )
+            result = cursor.fetchone()
+
+            if not result:
+                await update.message.reply_text("هیچ ختمی برای این گروه/تاپیک تعریف نشده است.")
+                return
+
+            khatm_type = result["khatm_type"]
+            is_active = result["is_active"]
+            current_total = result["current_total"]
+            zekr_text = result["zekr_text"] or "ندارد"
+            stop_number = result["stop_number"] or "ندارد"
+
+            status = (
+                f"وضعیت ختم:\n"
+                f"نوع: {khatm_type}\n"
+                f"فعال: {'بله' if is_active else 'خیر'}\n"
+                f"مقدار فعلی: {current_total}\n"
+                f"متن ذکر: {zekr_text}\n"
+                f"تعداد هدف: {stop_number}"
+            )
+            try:
+                await update.message.reply_text(status)
+            except TimedOut:
+                logger.warning("Timed out sending khatm_status message for group_id=%s, topic_id=%s, retrying once",
+                              group_id, topic_id)
+                await asyncio.sleep(2)
+                await update.message.reply_text(status)
+
+    except TimedOut:
+        logger.error("Timed out error in khatm_status: group_id=%s, topic_id=%s, user_id=%s",
+                    group_id, topic_id, update.effective_user.id, exc_info=True)
+        return
+    except Exception as e:
+        logger.error("Error in khatm_status: group_id=%s, topic_id=%s, error=%s",
+                    group_id, topic_id, e, exc_info=True)
+        try:
+            await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
+        except TimedOut:
+            logger.warning("Timed out sending error message for group_id=%s, topic_id=%s",
+                          group_id, topic_id)
+
