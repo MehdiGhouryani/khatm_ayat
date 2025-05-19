@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS topics (
     completion_count INTEGER DEFAULT 0,
     current_verse_id INTEGER DEFAULT 0,
     is_active INTEGER DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (group_id, topic_id),
     FOREIGN KEY (group_id) REFERENCES groups(group_id)
 );
@@ -41,7 +43,7 @@ CREATE TABLE IF NOT EXISTS khatm_ranges (
     group_id INTEGER,
     topic_id INTEGER,
     start_verse_id INTEGER NOT NULL,
-    end_verse_id INTEGER NOT NULL,
+    end_verse_id INTEGER NOT NULL CHECK(end_verse_id > start_verse_id),
     PRIMARY KEY (group_id, topic_id),
     FOREIGN KEY (group_id, topic_id) REFERENCES topics(group_id, topic_id)
 );
@@ -90,3 +92,17 @@ CREATE TABLE IF NOT EXISTS tag_timestamps (
     last_tag_time TEXT NOT NULL,
     FOREIGN KEY (group_id) REFERENCES groups(group_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_contributions_group_topic ON contributions(group_id, topic_id);
+CREATE INDEX IF NOT EXISTS idx_users_group_topic ON users(group_id, topic_id);
+CREATE INDEX IF NOT EXISTS idx_topics_group_topic ON topics(group_id, topic_id);
+CREATE INDEX IF NOT EXISTS idx_khatm_ranges_group_topic ON khatm_ranges(group_id, topic_id);
+
+
+CREATE TRIGGER update_topics_timestamp
+AFTER UPDATE ON topics
+FOR EACH ROW
+BEGIN
+    UPDATE topics SET updated_at = CURRENT_TIMESTAMP
+    WHERE group_id = OLD.group_id AND topic_id = OLD.topic_id;
+END;

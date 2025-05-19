@@ -5,7 +5,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 def load_settings():
-    """Load environment variables with validation."""
     load_dotenv()
     try:
         settings = {
@@ -14,9 +13,9 @@ def load_settings():
             "HADITH_CHANNEL": os.getenv("HADITH_CHANNEL", "@HadithChannel")
         }
         if not settings["TELEGRAM_TOKEN"]:
-            logger.error("TELEGRAM_TOKEN is not set in .env")
             raise ValueError("TELEGRAM_TOKEN is required")
-        logger.info("Environment variables loaded successfully")
+        if not os.path.isdir(os.path.dirname(settings["DATABASE_PATH"]) or "."):
+            raise ValueError("Database directory is not accessible")
         return settings
     except Exception as e:
         logger.error(f"Failed to load settings: {e}")

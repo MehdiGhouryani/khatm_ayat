@@ -1,17 +1,15 @@
 import re
 import random
 import logging
-import sqlite3
 from typing import Optional, List, Dict
 from bot.utils.quran import QuranManager
-from bot.database.db import get_db_connection
+from bot.database.db import fetch_all
 
 logger = logging.getLogger(__name__)
 
 quran = QuranManager()
 
 def parse_number(text):
-    """Parse Persian/English numbers from text."""
     try:
         text = text.strip().replace("٫", ".").replace(",", "")
         persian_digits = "۰۱۲۳۴۵۶۷۸۹"
@@ -21,42 +19,32 @@ def parse_number(text):
         number = float(text)
         if number.is_integer():
             number = int(number)
-        logger.debug(f"Parsed number: {text} -> {number}")
         return number
-    except (ValueError, TypeError) as e:
-        logger.warning(f"Failed to parse number: {text}, error: {e}")
+    except (ValueError, TypeError):
         return None
 
-def get_random_sepas(group_id, db_conn):
-    """Get a random sepas text for the group."""
+async def get_random_sepas(group_id):
     try:
-        cursor = db_conn.cursor()
-        cursor.execute(
+        texts = await fetch_all(
             "SELECT text FROM sepas_texts WHERE group_id = ? OR is_default = 1",
             (group_id,)
         )
-        texts = [row["text"] for row in cursor.fetchall()]
+        texts = [row["text"] for row in texts]
         if not texts:
-            logger.warning(f"No sepas texts found for group_id={group_id}")
             return ""
-        sepas = random.choice(texts)
-        logger.debug(f"Selected sepas text: {sepas}")
-        return sepas
-    except sqlite3.Error as e:
+        return random.choice(texts)
+    except Exception as e:
         logger.error(f"Failed to get sepas text: {e}")
         return ""
 
 def format_user_link(user_id, username, first_name):
-    """Format user name as a Telegram hyperlink."""
     try:
         name = username.lstrip('@') if username and username.strip() else (first_name or f"کاربر {user_id}")
         link = f"[{name}](tg://user?id={user_id})"
-        logger.debug(f"Formatted user link: {link}")
         return link
-    except Exception as e:
-        logger.error(f"Failed to format user link: {e}")
+    except Exception:
         return f"کاربر {user_id}"
-    
+
 def format_khatm_message(
     khatm_type: str,
     previous_total: int,
@@ -69,14 +57,12 @@ def format_khatm_message(
     max_display_verses: int = 10,
     completion_count: int = 0
 ) -> str:
-    """Format the khatm contribution message."""
     try:
         if khatm_type == "ghoran":
             if not verses:
                 return "خطا: اطلاعات آیات موجود نیست."
             
             current_surah = verses[0]['surah_name']
-            # سرصفحه پیام
             parts = [
                 f"نام سوره فعلی: {current_surah}",
                 f"تعداد ختم قرآن انجام شده: {completion_count}",
@@ -87,21 +73,17 @@ def format_khatm_message(
                 verse_no = v.get('id')
                 text = v.get('text', 'متن آیه موجود نیست')
                 parts.append(f"{verse_no}: {text}")
-                parts.append("")  # خط خالی برای فاصله‌گذاری
+                parts.append("")
 
-            # در صورت وجود آیات بیشتر از حد نمایش
             if len(verses) > max_display_verses:
                 parts.append("... (برای آیات بیشتر، محدوده را بررسی کنید)")
                 parts.append("")
         
-            # اضافه کردن در انتهای پیام
             if sepas_text:
                 parts.append("———————————————————\n")
                 parts.append(f"🌱 {sepas_text} 🌱")
         
-            # ساخت پیام نهایی با جداکننده خط جدید
             message = "\n".join(parts)
-            logger.debug(f"Formatted Quran khatm message: {message}")
             return message
         
         elif khatm_type == "salavat":
@@ -111,12 +93,10 @@ def format_khatm_message(
             )
             if sepas_text:
                 message += f"🌱 {sepas_text} 🌱\n"
-            logger.debug(f"Formatted salavat khatm message: {message}")
             return message
 
         elif khatm_type == "zekr":
             if not zekr_text:
-                logger.warning("No zekr text provided for zekr khatm message")
                 return "خطا: متن ذکر مشخص نشده است."
             message = (
                 f"📿 *{amount} {zekr_text}* ثبت شد!\n"
@@ -124,13 +104,11 @@ def format_khatm_message(
             )
             if sepas_text:
                 message += f"🌱 {sepas_text} 🌱\n"
-            logger.debug(f"Formatted zekr khatm message: {message}")
             return message
 
         else:
-            logger.error(f"Unknown khatm type: {khatm_type}")
             return "خطا: نوع ختم نامعتبر است."
 
     except Exception as e:
-        logger.error(f"Error formatting khatm message: {e}", exc_info=True)
+        logger.error(f"Error formatting khatm message: {e}")
         return "خطا در تولید پیام ختم."

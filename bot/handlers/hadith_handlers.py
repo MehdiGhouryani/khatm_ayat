@@ -1,9 +1,10 @@
 import logging
 import re
+import asyncio
 from telegram import Update
 from telegram.ext import ContextTypes
-from telegram.error import BadRequest, Forbidden
-from bot.database.db import write_queue,get_db_connection
+from telegram.error import BadRequest, Forbidden, TimedOut
+from bot.database.db import write_queue, fetch_all
 from bot.handlers.admin_handlers import is_admin
 from config.settings import HADITH_CHANNEL
 
@@ -13,12 +14,20 @@ async def hadis_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Enable daily hadith for a group."""
     try:
         if not await is_admin(update, context):
-            logger.warning(f"Non-admin user {update.effective_user.id} attempted /hadis_on")
+            logger.warning("Non-admin user %s attempted /hadis_on", update.effective_user.id)
             return
 
         if not HADITH_CHANNEL.startswith("@"):
-            logger.error(f"Invalid HADITH_CHANNEL: {HADITH_CHANNEL}")
+            logger.error("Invalid HADITH_CHANNEL: %s", HADITH_CHANNEL)
             await update.message.reply_text("کانال حدیث نامعتبر است. لطفاً تنظیمات را بررسی کنید.")
+            return
+
+        # Validate channel
+        try:
+            await context.bot.get_chat(HADITH_CHANNEL)
+        except (BadRequest, Forbidden) as e:
+            logger.error("Cannot access HADITH_CHANNEL %s: %s", HADITH_CHANNEL, e)
+            await update.message.reply_text("دسترسی به کانال حدیث ممکن نیست. لطفاً تنظیمات را بررسی کنید.")
             return
 
         group_id = update.effective_chat.id
@@ -31,14 +40,14 @@ async def hadis_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text(f"حدیث روزانه از {HADITH_CHANNEL} فعال شد.")
     except Exception as e:
-        logger.error(f"Error in hadis_on: {e}, group_id={group_id}", exc_info=True)
+        logger.error("Error in hadis_on: %s, group_id=%s", e, group_id)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
 async def hadis_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Disable daily hadith for a group."""
     try:
         if not await is_admin(update, context):
-            logger.warning(f"Non-admin user {update.effective_user.id} attempted /hadis_off")
+            logger.warning("Non-admin user %s attempted /hadis_off", update.effective_user.id)
             return
 
         group_id = update.effective_chat.id
@@ -51,45 +60,49 @@ async def hadis_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text("حدیث روزانه غیرفعال شد.")
     except Exception as e:
-        logger.error(f"Error in hadis_off: {e}, group_id={group_id}", exc_info=True)
+        logger.error("Error in hadis_off: %s, group_id=%s", e, group_id)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
 async def send_daily_hadith(context: ContextTypes.DEFAULT_TYPE):
     """Send daily hadith to groups with enabled hadith."""
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT group_id FROM hadith_settings WHERE hadith_enabled = 1")
-            groups = [row["group_id"] for row in cursor.fetchall()]
+        groups = await fetch_all("SELECT group_id FROM hadith_settings WHERE hadith_enabled = 1")
+        groups = [row["group_id"] for row in groups]
 
         if not groups:
             logger.debug("No groups with enabled hadith")
             return
 
-        messages = await context.bot.get_chat_history(chat_id=HADITH_CHANNEL, limit=1)
+        try:
+            messages = await context.bot.get_chat_history(chat_id=HADITH_CHANNEL, limit=1)
+        except (BadRequest, Forbidden, TimedOut) as e:
+            logger.error("Error fetching history from %s: %s", HADITH_CHANNEL, e)
+            return
+
         if not messages:
-            logger.warning(f"No messages found in channel {HADITH_CHANNEL}")
+            logger.warning("No messages found in channel %s", HADITH_CHANNEL)
             return
 
         message = messages[0]
         if not message.text:
-            logger.warning(f"Last message in {HADITH_CHANNEL} has no text")
+            logger.warning("Last message in %s has no text", HADITH_CHANNEL)
             return
 
         text = clean_hadith_text(message.text)
         if not text:
-            logger.warning(f"Cleaned hadith text is empty from {HADITH_CHANNEL}")
+            logger.warning("Cleaned hadith text is empty from %s", HADITH_CHANNEL)
             return
 
-        for group_id in groups:
+        for i, group_id in enumerate(groups):
             try:
                 await context.bot.send_message(chat_id=group_id, text=text)
-                logger.info(f"Hadith sent to group_id={group_id}: {text[:50]}...")
-            except (BadRequest, Forbidden) as e:
-                logger.error(f"Failed to send hadith to group_id={group_id}: {e}")
+                logger.info("Hadith sent to group_id=%s: %s...", group_id, text[:50])
+                await asyncio.sleep(0.1 * i)  # Stagger sending to avoid rate limits
+            except (BadRequest, Forbidden, TimedOut) as e:
+                logger.error("Failed to send hadith to group_id=%s: %s", group_id, e)
 
     except Exception as e:
-        logger.error(f"Error in send_daily_hadith: {e}", exc_info=True)
+        logger.error("Error in send_daily_hadith: %s", e)
 
 def clean_hadith_text(text: str) -> str:
     """Clean hadith text by removing usernames and links."""
@@ -99,5 +112,5 @@ def clean_hadith_text(text: str) -> str:
         text = re.sub(r'\s+', ' ', text).strip()
         return text
     except Exception as e:
-        logger.error(f"Error cleaning hadith text: {e}")
+        logger.error("Error cleaning hadith text: %s", e)
         return ""
