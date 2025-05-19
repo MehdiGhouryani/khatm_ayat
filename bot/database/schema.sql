@@ -99,7 +99,7 @@ CREATE INDEX IF NOT EXISTS idx_topics_group_topic ON topics(group_id, topic_id);
 CREATE INDEX IF NOT EXISTS idx_khatm_ranges_group_topic ON khatm_ranges(group_id, topic_id);
 
 
-CREATE TRIGGER update_topics_timestamp
+CREATE TRIGGER IF NOT EXISTS update_topics_timestamp
 AFTER UPDATE ON topics
 FOR EACH ROW
 BEGIN

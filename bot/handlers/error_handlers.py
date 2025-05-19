@@ -9,26 +9,42 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle errors in the bot."""
     try:
         error = context.error
+        if not update or not update.effective_chat:
+            logger.warning("No valid chat to send error message: error=%s", error)
+            return
+
+        chat_id = update.effective_chat.id
         if isinstance(error, TimedOut):
             logger.warning("Request timed out: %s", error)
-            if update and update.effective_message:
-                await update.effective_message.reply_text("درخواست با تأخیر مواجه شد. لطفاً دوباره تلاش کنید.")
+            try:
+                await context.bot.send_message(chat_id, "درخواست با تأخیر مواجه شد. لطفاً دوباره تلاش کنید.")
+            except (BadRequest, Forbidden) as e:
+                logger.debug("Failed to send TimedOut message: %s", e)
         elif isinstance(error, Forbidden):
             logger.warning("Forbidden error: %s", error)
-            if update and update.effective_message:
-                await update.effective_message.reply_text("دسترسی به گروه یا کاربر ممکن نیست.")
+            try:
+                await context.bot.send_message(chat_id, "دسترسی به گروه یا کاربر ممکن نیست.")
+            except (BadRequest, Forbidden) as e:
+                logger.debug("Failed to send Forbidden message: %s", e)
         elif isinstance(error, BadRequest):
             logger.warning("Bad request: %s", error)
-            if update and update.effective_message:
-                await update.effective_message.reply_text("درخواست نامعتبر است. لطفاً ورودی را بررسی کنید.")
+            try:
+                await context.bot.send_message(chat_id, "درخواست نامعتبر است. لطفاً ورودی را بررسی کنید.")
+            except (BadRequest, Forbidden) as e:
+                logger.debug("Failed to send BadRequest message: %s", e)
         else:
             logger.error("Unexpected error: %s", error, exc_info=True)
-            if update and update.effective_message:
-                await update.effective_message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
+            try:
+                await context.bot.send_message(chat_id, "خطایی رخ داد. لطفاً دوباره تلاش کنید.")
+            except (BadRequest, Forbidden) as e:
+                logger.debug("Failed to send error message: %s", e)
 
         # Notify admin for critical errors (optional)
         if not isinstance(error, (TimedOut, Forbidden, BadRequest)):
             admin_id = 123456789  # Replace with actual admin ID
-            await context.bot.send_message(admin_id, f"Error in bot: {error}")
+            try:
+                await context.bot.send_message(admin_id, f"Error in bot: {error}")
+            except Exception as e:
+                logger.debug("Failed to notify admin: %s", e)
     except Exception as e:
-        logger.error("Error in error_handler: %s", e)
+        logger.error("Error in error_handler: %s", e, exc_info=True)

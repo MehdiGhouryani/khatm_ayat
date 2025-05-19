@@ -6,7 +6,7 @@ from telegram.error import TimedOut, BadRequest
 from bot.database.db import fetch_one, fetch_all, write_queue
 from bot.utils.helpers import parse_number, format_khatm_message, get_random_sepas
 from bot.handlers.admin_handlers import is_admin, TEXT_COMMANDS
-from bot.utils.constants import quran
+from bot.utils.quran import QuranManager
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +186,7 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 return
 
             assigned_number = end_assign_id - start_assign_id + 1
+            quran = await QuranManager.get_instance()
             verses = quran.get_verses_in_range(start_assign_id, end_assign_id)
             if not verses:
                 await update.message.reply_text("خطا در تخصیص آیات. لطفاً دوباره تلاش کنید.")
@@ -428,6 +429,7 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.debug("Queued subtract contribution: group_id=%s, topic_id=%s, amount=%d",
                         group_id, topic_id, number)
 
+            quran = await QuranManager.get_instance()
             verses = quran.get_verses_in_range(new_verse_id, current_verse_id - 1) if number < 0 else []
 
         else:

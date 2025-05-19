@@ -12,11 +12,12 @@ from bot.handlers.hadith_handlers import hadis_on, hadis_off, send_daily_hadith
 from bot.handlers.tag_handlers import setup_handlers, TagManager
 from bot.handlers.error_handlers import error_handler
 from bot.database.db import init_db, process_queue_request, execute, write_queue, close_db_connection
-from bot.utils.constants import DEFAULT_SEPAS_TEXTS, DAILY_HADITH_TIME, DAILY_RESET_TIME, DAILY_PERIOD_RESET_TIME, init_quran_manager
+from bot.utils.constants import DEFAULT_SEPAS_TEXTS, DAILY_HADITH_TIME, DAILY_RESET_TIME, DAILY_PERIOD_RESET_TIME
 from config.settings import TELEGRAM_TOKEN
 from bot.utils.logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
 
 ZEKR_STATE, SALAVAT_STATE, QURAN_STATE = range(1, 4)
 
@@ -87,13 +88,17 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     return ConversationHandler.END
 
+async def ignore_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat:
+        await context.bot.send_message(update.effective_chat.id, "دستور ناشناخته! از /help استفاده کنید.")
+
 async def initialize_app():
     if not TELEGRAM_TOKEN:
         raise ValueError("TELEGRAM_TOKEN is required")
     await init_db()
     for text in DEFAULT_SEPAS_TEXTS:
         await execute("INSERT OR IGNORE INTO sepas_texts (text, is_default, group_id) VALUES (?, 1, NULL)", (text,))
-    await init_quran_manager()
+    
 
 def register_handlers(app: Application):
     conv_handler = ConversationHandler(
@@ -156,7 +161,7 @@ def register_handlers(app: Application):
     app.add_handler(MessageHandler(filters.ChatType.GROUPS & ~filters.COMMAND, handle_new_message))
     app.add_handler(MessageHandler(filters.Regex(r'^[-]?\d+$'), subtract_khatm))
     app.add_handler(MessageHandler(filters.Regex(r'^(شروع از)\s*(\d+)$'), start_from))
-    app.add_handler(MessageHandler(filters.COMMAND, lambda update, context: None))
+    app.add_handler(MessageHandler(filters.COMMAND, ignore_command))
     app.add_error_handler(error_handler)
 
 def register_jobs(app: Application):
@@ -165,8 +170,8 @@ def register_jobs(app: Application):
         raise RuntimeError("JobQueue initialization failed")
     job_queue.run_daily(send_daily_hadith, DAILY_HADITH_TIME, days=(0, 1, 2, 3, 4, 5, 6), name="job_daily_hadith")
     job_queue.run_daily(reset_daily_groups, DAILY_RESET_TIME, days=(0, 1, 2, 3, 4, 5, 6), name="job_daily_reset")
-    job_queue.run_daily(reset_periodic_topics, DAILY_PERIOD_RESET_TIME, days=(0, 1, 2, 3, 4, 5, 6), name="job_periodic_reset")
-    job_queue.run_repeating(process_queue_periodically, interval=0.5, first=1.0, name="job_queue_worker")
+    job_queue.run_daily(reset_periodic_topics, DAILY_PERIOD_RESET_TIME, days=(0, 1, 2, 3, 4, 5, 6), name="job_period_reset")
+    job_queue.run_repeating(process_queue_periodically, interval=1.0, first=1.0, name="job_queue_worker")
 
 async def shutdown(app: Application):
     await app.stop()
@@ -174,9 +179,10 @@ async def shutdown(app: Application):
     await close_db_connection()
 
 async def main():
+    await initialize_app()
     setup_logging()
     map_handlers()
-    await initialize_app()
+
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     register_handlers(app)
     register_jobs(app)
