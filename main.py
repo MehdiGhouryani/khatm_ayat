@@ -128,7 +128,7 @@ def register_handlers(app: Application):
         CommandHandler("stop_on_off", stop_on_off),
         CommandHandler("number", set_number),
         CommandHandler("number_off", number_off),
-        CommandHandler("reset_number_on", reset_number_on),
+        CommandHandler("reset_number_on", reset_number_off),
         CommandHandler("reset_number_off", reset_number_off),
         CommandHandler("reset_on", reset_daily),
         CommandHandler("reset_off", reset_off),
@@ -153,14 +153,26 @@ def register_handlers(app: Application):
         CommandHandler("jam_off", jam_off),
         CommandHandler("set_completion_message", set_completion_message),
         CommandHandler("khatm_status", khatm_status),
+        CommandHandler("subtract", subtract_khatm),
     ] + setup_handlers()
     app.add_handler(conv_handler)
     for handler in command_handlers:
         app.add_handler(handler)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_khatm_message))
     app.add_handler(MessageHandler(filters.ChatType.GROUPS & ~filters.COMMAND, handle_new_message))
-    app.add_handler(MessageHandler(filters.Regex(r'^[-]?\d+$'), subtract_khatm))
-    app.add_handler(MessageHandler(filters.Regex(r'^(شروع از)\s*(\d+)$'), start_from))
+    
+    subtract_pattern = r'^[-]?\d+$'
+    app.add_handler(MessageHandler(
+        filters.Regex(subtract_pattern) & filters.ChatType.GROUPS,
+        subtract_khatm
+    ))
+    
+    start_from_pattern = r'^(شروع از|start from)\s*(\d+)$'
+    app.add_handler(MessageHandler(
+        filters.Regex(start_from_pattern) & filters.ChatType.GROUPS,
+        start_from
+    ))
+    
     app.add_handler(MessageHandler(filters.COMMAND, ignore_command))
     app.add_error_handler(error_handler)
 
