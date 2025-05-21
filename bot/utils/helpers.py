@@ -64,6 +64,7 @@ def format_khatm_message(
             
             current_surah = verses[0]['surah_name']
             parts = [
+                f"📖 *{amount} آیه* ثبت شد!",
                 f"نام سوره فعلی: {current_surah}",
                 f"تعداد ختم قرآن انجام شده: {completion_count}",
                 "———————————————————\n",

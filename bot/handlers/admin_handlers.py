@@ -12,48 +12,47 @@ import time
 logger = logging.getLogger(__name__)
 
 TEXT_COMMANDS = {
-    "lock on": {"handler": "lock_on", "admin_only": True, "aliases": ["قفل روشن"]},
-    "lock off": {"handler": "lock_off", "admin_only": True, "aliases": ["قفل خاموش"]},
-    "start": {"handler": "start", "admin_only": True, "aliases": ["شروع"]},
-    "stop": {"handler": "stop", "admin_only": True, "aliases": ["توقف"]},
-    "help": {"handler": "help_command", "admin_only": False, "aliases": ["راهنما"]},
-    "max": {"handler": "set_max", "admin_only": True, "aliases": ["حداکثر"]},
-    "max off": {"handler": "max_off", "admin_only": True, "aliases": ["حداکثر خاموش"]},
-    "min": {"handler": "set_min", "admin_only": True, "aliases": ["حداقل"]},
-    "min off": {"handler": "min_off", "admin_only": True, "aliases": ["حداقل خاموش"]},
-    "sepas on": {"handler": "sepas_on", "admin_only": True, "aliases": ["سپاس روشن"]},
-    "sepas off": {"handler": "sepas_off", "admin_only": True, "aliases": ["سپاس خاموش"]},
-    "add sepas": {"handler": "add_sepas", "admin_only": True, "aliases": ["اضافه سپاس"]},
-    "reset daily": {"handler": "reset_daily", "admin_only": True, "aliases": ["ریست روزانه"]},
-    "reset off": {"handler": "reset_off", "admin_only": True, "aliases": ["ریست خاموش"]},
-    "reset zekr": {"handler": "reset_zekr", "admin_only": True, "aliases": ["ریست ذکر"]},
-    "reset kol": {"handler": "reset_kol", "admin_only": True, "aliases": ["ریست کل"]},
-    "time off": {"handler": "time_off", "admin_only": True, "aliases": ["خاموشی"]},
-    "time off disable": {"handler": "time_off_disable", "admin_only": True, "aliases": ["خاموشی غیرفعال"]},
-    "hadis on": {"handler": "hadis_on", "admin_only": True, "aliases": ["حدیث روزانه"]},
-    "hadis off": {"handler": "hadis_off", "admin_only": True, "aliases": ["حدیث خاموش"]},
-    "amar kol": {"handler": "show_total_stats", "admin_only": False, "aliases": ["آمار کل"]},
-    "amar list": {"handler": "show_ranking", "admin_only": False, "aliases": ["لیست آمار"]},
-    "stop on": {"handler": "stop_on", "admin_only": True, "aliases": ["توقف روشن"]},
-    "stop on off": {"handler": "stop_on_off", "admin_only": True, "aliases": ["توقف خاموش"]},
-    "number": {"handler": "set_number", "admin_only": True, "aliases": ["تعداد"]},
-    "number off": {"handler": "number_off", "admin_only": True, "aliases": ["تعداد خاموش"]},
-    "reset number on": {"handler": "reset_number_on", "admin_only": True, "aliases": ["ریست تعداد روشن"]},
-    "reset number off": {"handler": "reset_number_off", "admin_only": True, "aliases": ["ریست تعداد خاموش"]},
-    "jam on": {"handler": "jam_on", "admin_only": True, "aliases": ["جمع روشن"]},
-    "jam off": {"handler": "jam_off", "admin_only": True, "aliases": ["جمع خاموش"]},
-    "set completion message": {"handler": "set_completion_message", "admin_only": True, "aliases": ["پیام تکمیل"]},
-    "khatm zekr": {"handler": "start_khatm_zekr", "admin_only": True, "aliases": ["ختم ذکر"]},
-    "khatm salavat": {"handler": "start_khatm_salavat", "admin_only": True, "aliases": ["ختم صلوات"]},
-    "khatm ghoran": {"handler": "start_khatm_ghoran", "admin_only": True, "aliases": ["ختم قرآن"]},
-    "set range": {"handler": "set_range", "admin_only": True, "aliases": ["تنظیم محدوده"]},
-    "topic": {"handler": "topic", "admin_only": True, "aliases": ["تاپیک"]},
-    "tag": {"handler": "tag_command", "admin_only": True, "aliases": ["تگ"]},
-    "cancel_tag": {"handler": "cancel_tag", "admin_only": True, "aliases": ["لغو تگ"]},
-    "subtract": {"handler": "subtract_khatm", "admin_only": True, "aliases": ["کاهش"]},
-    "start from": {"handler": "start_from", "admin_only": True, "aliases": ["شروع از"]}
+    "lock on": {"handler": "lock_on", "admin_only": True, "aliases": ["قفل روشن"], "takes_args": False},
+    "lock off": {"handler": "lock_off", "admin_only": True, "aliases": ["قفل خاموش"], "takes_args": False},
+    "start": {"handler": "start", "admin_only": True, "aliases": ["شروع"], "takes_args": False},
+    "stop": {"handler": "stop", "admin_only": True, "aliases": ["توقف"], "takes_args": False},
+    "help": {"handler": "help_command", "admin_only": False, "aliases": ["راهنما"], "takes_args": False},
+    "max": {"handler": "set_max", "admin_only": True, "aliases": ["حداکثر"], "takes_args": True},
+    "max off": {"handler": "max_off", "admin_only": True, "aliases": ["حداکثر خاموش"], "takes_args": False},
+    "min": {"handler": "set_min", "admin_only": True, "aliases": ["حداقل"], "takes_args": True},
+    "min off": {"handler": "min_off", "admin_only": True, "aliases": ["حداقل خاموش"], "takes_args": False},
+    "sepas on": {"handler": "sepas_on", "admin_only": True, "aliases": ["سپاس روشن"], "takes_args": False},
+    "sepas off": {"handler": "sepas_off", "admin_only": True, "aliases": ["سپاس خاموش"], "takes_args": False},
+    "add sepas": {"handler": "add_sepas", "admin_only": True, "aliases": ["اضافه سپاس"], "takes_args": True},
+    "reset daily": {"handler": "reset_daily", "admin_only": True, "aliases": ["ریست روزانه"], "takes_args": False},
+    "reset off": {"handler": "reset_off", "admin_only": True, "aliases": ["ریست خاموش"], "takes_args": False},
+    "reset zekr": {"handler": "reset_zekr", "admin_only": True, "aliases": ["ریست ذکر"], "takes_args": False},
+    "reset kol": {"handler": "reset_kol", "admin_only": True, "aliases": ["ریست کل"], "takes_args": False},
+    "time off": {"handler": "time_off", "admin_only": True, "aliases": ["خاموشی"], "takes_args": True},
+    "time off disable": {"handler": "time_off_disable", "admin_only": True, "aliases": ["خاموشی غیرفعال"], "takes_args": False},
+    "hadis on": {"handler": "hadis_on", "admin_only": True, "aliases": ["حدیث روزانه"], "takes_args": False},
+    "hadis off": {"handler": "hadis_off", "admin_only": True, "aliases": ["حدیث خاموش"], "takes_args": False},
+    "amar kol": {"handler": "show_total_stats", "admin_only": False, "aliases": ["آمار کل"], "takes_args": False},
+    "amar list": {"handler": "show_ranking", "admin_only": False, "aliases": ["لیست آمار"], "takes_args": False},
+    "stop on": {"handler": "stop_on", "admin_only": True, "aliases": ["توقف روشن"], "takes_args": True},
+    "stop on off": {"handler": "stop_on_off", "admin_only": True, "aliases": ["توقف خاموش"], "takes_args": False},
+    "number": {"handler": "set_number", "admin_only": True, "aliases": ["تعداد"], "takes_args": True},
+    "number off": {"handler": "number_off", "admin_only": True, "aliases": ["تعداد خاموش"], "takes_args": False},
+    "reset number on": {"handler": "reset_number_on", "admin_only": True, "aliases": ["ریست تعداد روشن"], "takes_args": False},
+    "reset number off": {"handler": "reset_number_off", "admin_only": True, "aliases": ["ریست تعداد خاموش"], "takes_args": False},
+    "jam on": {"handler": "jam_on", "admin_only": True, "aliases": ["جمع روشن"], "takes_args": False},
+    "jam off": {"handler": "jam_off", "admin_only": True, "aliases": ["جمع خاموش"], "takes_args": False},
+    "set completion message": {"handler": "set_completion_message", "admin_only": True, "aliases": ["پیام تکمیل"], "takes_args": True},
+    "khatm zekr": {"handler": "start_khatm_zekr", "admin_only": True, "aliases": ["ختم ذکر"], "takes_args": False},
+    "khatm salavat": {"handler": "start_khatm_salavat", "admin_only": True, "aliases": ["ختم صلوات"], "takes_args": False},
+    "khatm ghoran": {"handler": "start_khatm_ghoran", "admin_only": True, "aliases": ["ختم قرآن"], "takes_args": False},
+    "set range": {"handler": "set_range", "admin_only": True, "aliases": ["تنظیم محدوده"], "takes_args": True},
+    "topic": {"handler": "topic", "admin_only": True, "aliases": ["تاپیک"], "takes_args": True},
+    "tag": {"handler": "tag_command", "admin_only": True, "aliases": ["تگ"], "takes_args": False},
+    "cancel_tag": {"handler": "cancel_tag", "admin_only": True, "aliases": ["لغو تگ"], "takes_args": False},
+    "subtract": {"handler": "subtract_khatm", "admin_only": True, "aliases": ["کاهش"], "takes_args": True},
+    "start from": {"handler": "start_from", "admin_only": True, "aliases": ["شروع از"], "takes_args": True}
 }
-
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         help_text = """
@@ -151,6 +150,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error("Error in help command: %s", e)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
+
+
+
+
 
 async def set_max_verses(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -309,9 +312,6 @@ async def khatm_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
 
         if not await is_admin(update, context):
-            await query.message.edit_text(
-                "❌ فقط ادمین می‌تواند نوع ختم را انتخاب کند."
-            )
             return
 
         group_id = update.effective_chat.id
@@ -340,9 +340,7 @@ async def khatm_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
             (khatm_type, topic_id, group_id)
         )
 
-        message = f"✅ ختم {khatm_type} فعال شد."
-        if old_khatm_type:
-            message = f"✅ ختم {old_khatm_type} غیرفعال شد.\n" + message
+        message = f" ختم {khatm_type} فعال شد."
 
         if khatm_type == "ghoran":
             quran = await QuranManager.get_instance()
@@ -372,7 +370,7 @@ async def khatm_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "group_id": group_id,
                 "timestamp": time.time()
             }
-            message += "\n\n📿 لطفاً متن ذکر مورد نظر خود را ارسال کنید."
+            message += "📿 لطفاً متن ذکر مورد نظر خود را ارسال کنید."
 
         elif khatm_type == "salavat":
             context.user_data["awaiting_salavat"] = {
@@ -380,7 +378,7 @@ async def khatm_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "group_id": group_id,
                 "timestamp": time.time()
             }
-            message += "\n\n🙏 لطفاً تعداد صلوات را وارد کنید (مثال: 14000)."
+            message += "\n\n🙏 لطفاً تعداد صلوات را وارد کنید 14000."
 
         await query.message.edit_text(message)
 
@@ -394,19 +392,25 @@ async def khatm_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start_khatm_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Start a new zekr khatm and prompt for zekr text."""
     try:
+        logger.info("Starting start_khatm_zekr: user_id=%s, chat_id=%s", 
+                   update.effective_user.id, update.effective_chat.id)
+
         if not update.effective_chat or update.effective_chat.type not in ["group", "supergroup"]:
-            logger.debug("start_khatm_zekr in non-group chat: user_id=%s", update.effective_user.id)
+            logger.warning("start_khatm_zekr called in non-group chat: user_id=%s", update.effective_user.id)
             return ConversationHandler.END
 
         if not await is_admin(update, context):
+            logger.warning("Non-admin user attempted start_khatm_zekr: user_id=%s", update.effective_user.id)
             return ConversationHandler.END
 
         group_id = update.effective_chat.id
         topic_id = update.message.message_thread_id or group_id
+        logger.info("Processing start_khatm_zekr: group_id=%s, topic_id=%s", group_id, topic_id)
 
         # Check if group is active
         group = await fetch_one("SELECT is_active FROM groups WHERE group_id = ?", (group_id,))
         if not group or not group["is_active"]:
+            logger.warning("Group not active for start_khatm_zekr: group_id=%s", group_id)
             await update.message.reply_text("گروه فعال نیست. از /start یا 'شروع' استفاده کنید.")
             return ConversationHandler.END
 
@@ -417,14 +421,18 @@ async def start_khatm_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         if active_topic and active_topic["khatm_type"] == "zekr":
-            await update.message.reply_text("یک ختم ذکر فعال وجود دارد. ابتدا آن را غیرفعال کنید.")
+            logger.warning("Active zekr khatm already exists: group_id=%s, topic_id=%s", group_id, topic_id)
+            await update.message.reply_text("یک ختم ذکر فعال وجود دارد.")
             return ConversationHandler.END
 
         # Clear all user_data states to prevent conflicts
         context.user_data.clear()
+        logger.debug("Cleared user_data context for start_khatm_zekr")
         
         # Deactivate any existing khatm
         old_khatm_type = await deactivate_current_khatm(group_id, topic_id)
+        logger.info("Deactivated old khatm: group_id=%s, topic_id=%s, old_type=%s", 
+                   group_id, topic_id, old_khatm_type)
 
         # Queue the new khatm
         request = {
@@ -435,54 +443,67 @@ async def start_khatm_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "khatm_type": "zekr"
         }
         await write_queue.put(request)
+        logger.info("Queued start_khatm_zekr request: group_id=%s, topic_id=%s", group_id, topic_id)
 
         # Set awaiting state
         context.user_data["awaiting_zekr"] = {
             "topic_id": topic_id,
             "group_id": group_id,
-            "timestamp": time.time()  # Add timestamp for state validation
+            "timestamp": time.time()
         }
+        logger.info("Set awaiting_zekr state: group_id=%s, topic_id=%s, timestamp=%s", 
+                   group_id, topic_id, context.user_data["awaiting_zekr"]["timestamp"])
         
-        message =( 
-        "📿 ختم ذکر فعال شد.\n"
-        "لطفاً متن ذکر را وارد کنید.\n"
-        "مثال: سبحان‌الله")
+        message = "📿 ختم ذکر فعال شد.\nلطفاً متن ذکر را وارد کنید.\nمثال: سبحان‌الله"
         if old_khatm_type:
             message = f"✅ ختم {old_khatm_type} غیرفعال شد.\n" + message
 
         await update.message.reply_text(message)
+        logger.info("Sent zekr text prompt message")
         return 1
 
     except Exception as e:
         logger.error("Error in start_khatm_zekr: group_id=%s, topic_id=%s, error=%s",
                     group_id, topic_id, e, exc_info=True)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
-        context.user_data.clear()  # Clear state on error
+        context.user_data.clear()
         return ConversationHandler.END
 
 async def set_zekr_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Set the zekr text for an active khatm."""
     try:
+        logger.info("Starting set_zekr_text: user_id=%s, chat_id=%s", 
+                   update.effective_user.id, update.effective_chat.id)
+
         if not update.effective_chat or update.effective_chat.type not in ["group", "supergroup"]:
-            logger.debug("set_zekr_text in non-group chat: user_id=%s", update.effective_user.id)
+            logger.warning("set_zekr_text called in non-group chat: user_id=%s", update.effective_user.id)
             return ConversationHandler.END
 
         if not await is_admin(update, context):
+            logger.warning("Non-admin user attempted set_zekr_text: user_id=%s", update.effective_user.id)
             return ConversationHandler.END
 
         if "awaiting_zekr" not in context.user_data:
+            logger.warning("No awaiting_zekr state found in user_data")
             await update.message.reply_text("هیچ ختم ذکری در انتظار تنظیم نیست.")
             return ConversationHandler.END
 
-        # Validate state timestamp (5 minutes timeout)
+        # Validate state timestamp (10 minutes timeout)
         state_data = context.user_data["awaiting_zekr"]
-        if time.time() - state_data.get("timestamp", 0) > 300:
+        current_time = time.time()
+        state_age = current_time - state_data.get("timestamp", 0)
+        logger.info("Checking state age: current_time=%s, state_timestamp=%s, age=%s seconds", 
+                   current_time, state_data.get("timestamp"), state_age)
+
+        if state_age > 600:  # 10 minutes timeout
+            logger.warning("State timeout exceeded: age=%s seconds", state_age)
             context.user_data.clear()
             await update.message.reply_text("زمان تنظیم متن ذکر به پایان رسیده است. لطفاً دوباره تلاش کنید.")
             return ConversationHandler.END
 
         group_id = update.effective_chat.id
         topic_id = update.message.message_thread_id or group_id
+        logger.info("Processing set_zekr_text: group_id=%s, topic_id=%s", group_id, topic_id)
 
         # Verify topic is active and of type zekr
         topic = await fetch_one(
@@ -490,33 +511,61 @@ async def set_zekr_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             (topic_id, group_id)
         )
         
-        if not topic or not topic["is_active"] or topic["khatm_type"] != "zekr":
+        if not topic:
+            logger.error("Topic not found: group_id=%s, topic_id=%s", group_id, topic_id)
+            context.user_data.clear()
+            await update.message.reply_text("تاپیک ختم یافت نشد.")
+            return ConversationHandler.END
+
+        if not topic["is_active"]:
+            logger.warning("Topic not active: group_id=%s, topic_id=%s", group_id, topic_id)
             context.user_data.clear()
             await update.message.reply_text("ختم ذکر فعال نیست. لطفاً ابتدا ختم ذکر را شروع کنید.")
             return ConversationHandler.END
 
+        if topic["khatm_type"] != "zekr":
+            logger.warning("Topic is not zekr type: group_id=%s, topic_id=%s, type=%s", 
+                         group_id, topic_id, topic["khatm_type"])
+            context.user_data.clear()
+            await update.message.reply_text("این تاپیک ختم ذکر نیست.")
+            return ConversationHandler.END
+
         zekr_text = update.message.text.strip()
         if not zekr_text:
+            logger.warning("Empty zekr text provided")
             await update.message.reply_text("متن ذکر نمی‌تواند خالی باشد.")
             return 1
 
-        # Update zekr text
-        await execute(
-            "UPDATE topics SET zekr_text = ? WHERE topic_id = ? AND group_id = ?",
-            (zekr_text, topic_id, group_id)
-        )
+        # Validate zekr text length
+        if len(zekr_text) > 100:
+            logger.warning("Zekr text too long: length=%d", len(zekr_text))
+            await update.message.reply_text("متن ذکر نباید بیشتر از ۱۰۰ کاراکتر باشد.")
+            return 1
+
+        logger.info("Valid zekr text received: length=%d", len(zekr_text))
+
+        # Queue the zekr text update
+        request = {
+            "type": "set_zekr_text",
+            "group_id": group_id,
+            "topic_id": topic_id,
+            "zekr_text": zekr_text
+        }
+        await write_queue.put(request)
+        logger.info("Queued zekr text update: group_id=%s, topic_id=%s", group_id, topic_id)
 
         # Clear the awaiting state
-        context.user_data.pop("awaiting_zekr", None)
+        context.user_data.clear()
+        logger.info("Cleared user_data context after successful zekr text update")
 
         await update.message.reply_text(f"✅ متن ذکر با موفقیت تنظیم شد:\n{zekr_text}")
+        logger.info("Sent confirmation message for zekr text update")
         return ConversationHandler.END
 
     except Exception as e:
-        logger.error("Error in set_zekr_text: group_id=%s, topic_id=%s, error=%s",
-                    group_id, topic_id, e, exc_info=True)
+        logger.error("Error in set_zekr_text: %s", e, exc_info=True)
+        context.user_data.clear()
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
-        context.user_data.clear()  # Clear state on error
         return ConversationHandler.END
 
 async def set_range(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -626,43 +675,95 @@ async def start_khatm_salavat(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def start_khatm_ghoran(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        if not await is_admin(update, context):
+        logger.info("Starting start_khatm_ghoran: user_id=%s, chat_id=%s", 
+                   update.effective_user.id, update.effective_chat.id)
+
+        if not update.message or not update.message.text:
+            logger.warning("Invalid message format in start_khatm_ghoran")
+            await update.message.reply_text("لطفاً دستور را درست وارد کنید.")
             return
+
+        if not await is_admin(update, context):
+            logger.warning("Non-admin user attempted start_khatm_ghoran: user_id=%s", update.effective_user.id)
+            return
+
         group_id = update.effective_chat.id
         topic_id = update.message.message_thread_id or group_id
-        group = await fetch_one("SELECT is_active FROM groups WHERE group_id = ?", (group_id,))
-        if not group or not group["is_active"]:
-            await update.message.reply_text("گروه فعال نیست. از /start یا 'شروع' استفاده کنید.")
-            return
-        old_khatm_type = await deactivate_current_khatm(group_id, topic_id)
-        quran = await QuranManager.get_instance()
-        start_verse = quran.get_verse(1, 1)
-        end_verse = quran.get_verse(114, 6)
-        if not start_verse or not end_verse:
-            await update.message.reply_text("خطا در تنظیم محدوده قرآن. آیات نامعتبر هستند.")
-            return
-        request = {
-            "type": "start_khatm_ghoran",
-            "group_id": group_id,
-            "topic_id": topic_id,
-            "topic_name": "اصلی",
-            "khatm_type": "ghoran",
-            "start_verse_id": start_verse['id'],
-            "end_verse_id": end_verse['id']
-        }
-        await write_queue.put(request)
-        message = (
-            "📖 ختم قرآن فعال شد.\n"
-        )
+        logger.info("Processing start_khatm_ghoran: group_id=%s, topic_id=%s", group_id, topic_id)
 
-        if old_khatm_type:
-            message = f"✅ ختم {old_khatm_type} غیرفعال شد.\n" + message
+        # Check if group is active
+        group = await fetch_one("SELECT is_active FROM groups WHERE group_id = ?", (group_id,))
+        if not group:
+            logger.error("Group not found in database: group_id=%s", group_id)
+            await update.message.reply_text("❌ گروه در سیستم ثبت نشده است.")
+            return
+        if not group["is_active"]:
+            logger.warning("Group is inactive: group_id=%s", group_id)
+            await update.message.reply_text("❌ گروه غیرفعال است.")
+            return
+
+        # Deactivate any existing khatm
+        try:
+            await execute(
+                "UPDATE topics SET is_active = 0 WHERE group_id = ? AND is_active = 1",
+                (group_id,)
+            )
+            logger.debug("Deactivated existing khatm for group_id=%s", group_id)
+        except Exception as e:
+            logger.error("Failed to deactivate existing khatm: %s", e, exc_info=True)
+            raise
+
+        # Get verse information for start and end
+        try:
+            quran = await QuranManager.get_instance()
+            start_verse = quran.get_verse(1, 1)  # Surah 1 Ayah 1
+            end_verse = quran.get_verse(114, 6)  # Surah 114 Ayah 6
+
+            if not start_verse or not end_verse:
+                logger.error("Failed to get verse information: start_verse=%s, end_verse=%s", 
+                           start_verse, end_verse)
+                await update.message.reply_text("❌ خطا در دریافت اطلاعات آیات")
+                return
+
+            logger.debug("Retrieved verse information: start_verse_id=%d, end_verse_id=%d", 
+                        start_verse['id'], end_verse['id'])
+        except Exception as e:
+            logger.error("Error getting verse information: %s", e, exc_info=True)
+            await update.message.reply_text("❌ خطا در دریافت اطلاعات آیات")
+            return
+
+        # Queue the start_khatm_ghoran request
+        try:
+            request = {
+                "type": "start_khatm_ghoran",
+                "group_id": group_id,
+                "topic_id": topic_id,
+                "topic_name": "اصلی",
+                "khatm_type": "ghoran",
+                "start_verse_id": start_verse['id'],
+                "end_verse_id": end_verse['id']
+            }
+            await write_queue.put(request)
+            logger.info("Queued start_khatm_ghoran request: group_id=%s, topic_id=%s, start_verse_id=%d, end_verse_id=%d", 
+                       group_id, topic_id, start_verse['id'], end_verse['id'])
+        except Exception as e:
+            logger.error("Failed to queue start_khatm_ghoran request: %s", e, exc_info=True)
+            raise
+
+        # Send confirmation message
+        message = (
+            f"✅ ختم قرآن فعال شد:\n"
+            f"از {start_verse['surah_name']} آیه 1\n"
+            f"تا {end_verse['surah_name']} آیه 6\n\n"
+            f"حالا می‌توانید تعداد آیات را وارد کنید."
+        )
         await update.message.reply_text(message)
-        return ConversationHandler.END
+        logger.info("Successfully started Quran khatm: group_id=%s, topic_id=%s", group_id, topic_id)
+
     except Exception as e:
-        logger.error("Error in start_khatm_ghoran: %s", e, exc_info=True)
-        await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید یا با ادمین تماس بگیرید.")
-        return ConversationHandler.END
+        logger.error("Critical error in start_khatm_ghoran: group_id=%s, topic_id=%s, error=%s",
+                    group_id, topic_id, e, exc_info=True)
+        await update.message.reply_text("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
 async def set_salavat_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:

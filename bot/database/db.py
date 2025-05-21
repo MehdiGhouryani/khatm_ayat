@@ -95,79 +95,149 @@ async def handle_update_user(cursor, request):
                 request["user_id"], request["group_id"], request["topic_id"])
 
 async def handle_contribution(cursor, request):
-    await cursor.execute(
-        """
-        INSERT INTO contributions (group_id, topic_id, user_id, amount, verse_id)
-        VALUES (?, ?, ?, ?, ?)
-        """,
-        (
-            request["group_id"],
-            request["topic_id"],
-            request["user_id"],
-            request["amount"],
-            request.get("verse_id"),
-        ),
-    )
-    if request["khatm_type"] == "ghoran":
-        await cursor.execute(
+    try:
+        logger.info("Starting handle_contribution: group_id=%s, topic_id=%s, user_id=%s, amount=%d, khatm_type=%s",
+                   request["group_id"], request["topic_id"], request["user_id"], request["amount"], request["khatm_type"])
+
+        # First get the current total
+        current_topic = await cursor.execute(
             """
-            UPDATE users SET total_ayat = total_ayat + ?
-            WHERE user_id = ? AND group_id = ? AND topic_id = ?
-            """,
-            (
-                request["amount"],
-                request["user_id"],
-                request["group_id"],
-                request["topic_id"],
-            ),
-        )
-        await cursor.execute(
-            """
-            UPDATE topics SET current_verse_id = ?, current_total = current_total + ?
+            SELECT current_total FROM topics 
             WHERE topic_id = ? AND group_id = ?
             """,
-            (
-                request["current_verse_id"],
-                request["amount"],
-                request["topic_id"],
-                request["group_id"],
-            ),
+            (request["topic_id"], request["group_id"])
         )
-    else:
-        total_field = "total_salavat" if request["khatm_type"] == "salavat" else "total_zekr"
-        await cursor.execute(
-            f"""
-            UPDATE users SET {total_field} = {total_field} + ?
-            WHERE user_id = ? AND group_id = ? AND topic_id = ?
-            """,
-            (
-                request["amount"],
-                request["user_id"],
-                request["group_id"],
-                request["topic_id"],
-            ),
-        )
-        await cursor.execute(
-            """
-            UPDATE topics SET current_total = current_total + ?
-            WHERE topic_id = ? AND group_id = ?
-            """,
-            (
-                request["amount"],
-                request["topic_id"],
-                request["group_id"],
-            ),
-        )
-    if request.get("completed"):
-        await cursor.execute(
-            """
-            UPDATE topics SET is_active = 0, completion_count = completion_count + 1
-            WHERE topic_id = ? AND group_id = ?
-            """,
-            (request["topic_id"], request["group_id"]),
-        )
-    logger.info("Processed contribution for group_id=%s, topic_id=%s", 
-                request["group_id"], request["topic_id"])
+        current_total = (await current_topic.fetchone())["current_total"]
+        logger.debug("Current total before contribution: %d", current_total)
+        
+        # Insert contribution record
+        try:
+            await cursor.execute(
+                """
+                INSERT INTO contributions (group_id, topic_id, user_id, amount, verse_id)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    request["group_id"],
+                    request["topic_id"],
+                    request["user_id"],
+                    request["amount"],
+                    request.get("verse_id"),
+                ),
+            )
+            logger.debug("Successfully inserted contribution record")
+        except Exception as e:
+            logger.error("Failed to insert contribution record: %s", e, exc_info=True)
+            raise
+
+        # Update user totals
+        if request["khatm_type"] == "ghoran":
+            try:
+                await cursor.execute(
+                    """
+                    UPDATE users SET total_ayat = total_ayat + ?
+                    WHERE user_id = ? AND group_id = ? AND topic_id = ?
+                    """,
+                    (
+                        request["amount"],
+                        request["user_id"],
+                        request["group_id"],
+                        request["topic_id"],
+                    ),
+                )
+                logger.debug("Updated user total_ayat for Quran khatm")
+                
+                await cursor.execute(
+                    """
+                    UPDATE topics SET current_verse_id = ?, current_total = current_total + ?
+                    WHERE topic_id = ? AND group_id = ?
+                    """,
+                    (
+                        request["current_verse_id"],
+                        request["amount"],
+                        request["topic_id"],
+                        request["group_id"],
+                    ),
+                )
+                logger.debug("Updated topic current_verse_id and current_total for Quran khatm")
+                # مقداردهی new_total برای قرآن
+                updated_topic = await cursor.execute(
+                    """
+                    SELECT current_total FROM topics 
+                    WHERE topic_id = ? AND group_id = ?
+                    """,
+                    (request["topic_id"], request["group_id"])
+                )
+                new_total = (await updated_topic.fetchone())["current_total"]
+                logger.debug("Updated topic current_total to %d for %s khatm", new_total, request["khatm_type"])
+            except Exception as e:
+                logger.error("Failed to update Quran khatm totals: %s", e, exc_info=True)
+                raise
+        else:
+            try:
+                total_field = "total_salavat" if request["khatm_type"] == "salavat" else "total_zekr"
+                # Update user totals
+                await cursor.execute(
+                    f"""
+                    UPDATE users SET {total_field} = {total_field} + ?
+                    WHERE user_id = ? AND group_id = ? AND topic_id = ?
+                    """,
+                    (
+                        request["amount"],
+                        request["user_id"],
+                        request["group_id"],
+                        request["topic_id"],
+                    ),
+                )
+                logger.debug("Updated user %s for %s khatm", total_field, request["khatm_type"])
+                
+                # Atomically update topic total
+                await cursor.execute(
+                    """
+                    UPDATE topics SET current_total = current_total + ?
+                    WHERE topic_id = ? AND group_id = ?
+                    """,
+                    (
+                        request["amount"],
+                        request["topic_id"],
+                        request["group_id"],
+                    ),
+                )
+                # Verify update
+                updated_topic = await cursor.execute(
+                    """
+                    SELECT current_total FROM topics 
+                    WHERE topic_id = ? AND group_id = ?
+                    """,
+                    (request["topic_id"], request["group_id"])
+                )
+                new_total = (await updated_topic.fetchone())["current_total"]
+                logger.debug("Updated topic current_total to %d for %s khatm", new_total, request["khatm_type"])
+            except Exception as e:
+                logger.error("Failed to update %s khatm totals: %s", request["khatm_type"], e, exc_info=True)
+                raise
+
+        if request.get("completed"):
+            try:
+                await cursor.execute(
+                    """
+                    UPDATE topics SET is_active = 0, completion_count = completion_count + 1
+                    WHERE topic_id = ? AND group_id = ?
+                    """,
+                    (request["topic_id"], request["group_id"]),
+                )
+                logger.info("Marked khatm as completed: group_id=%s, topic_id=%s", 
+                           request["group_id"], request["topic_id"])
+            except Exception as e:
+                logger.error("Failed to mark khatm as completed: %s", e, exc_info=True)
+                raise
+
+        logger.info("Successfully processed contribution: group_id=%s, topic_id=%s, amount=%d, new_total=%d", 
+                   request["group_id"], request["topic_id"], request["amount"], new_total)
+    except Exception as e:
+        logger.error("Critical error in handle_contribution: group_id=%s, topic_id=%s, error=%s",
+                    request["group_id"], request["topic_id"], e, exc_info=True)
+        raise
 
 async def handle_reset_daily(cursor, request):
     await cursor.execute(
@@ -246,35 +316,54 @@ async def handle_reset_periodic_topic(cursor, request):
                 request["group_id"], request["topic_id"])
 
 async def handle_start_khatm_ghoran(cursor, request):
-    await cursor.execute(
-        """
-        INSERT OR REPLACE INTO topics
-        (topic_id, group_id, name, khatm_type, current_verse_id, is_active)
-        VALUES (?, ?, ?, ?, ?, 1)
-        """,
-        (
-            request["topic_id"],
-            request["group_id"],
-            request["topic_name"],
-            request["khatm_type"],
-            request["start_verse_id"],
+    try:
+        # Start transaction
+        await cursor.execute(
+            """
+            INSERT OR REPLACE INTO topics
+            (topic_id, group_id, name, khatm_type, current_verse_id, is_active)
+            VALUES (?, ?, ?, ?, ?, 1)
+            """,
+            (
+                request["topic_id"],
+                request["group_id"],
+                request["topic_name"],
+                request["khatm_type"],
+                request["start_verse_id"],
+            )
         )
-    )
-    await cursor.execute(
-        """
-        INSERT OR REPLACE INTO khatm_ranges
-        (group_id, topic_id, start_verse_id, end_verse_id)
-        VALUES (?, ?, ?, ?)
-        """,
-        (
-            request["group_id"],
-            request["topic_id"],
-            request["start_verse_id"],
-            request["end_verse_id"],
+        await cursor.execute(
+            """
+            INSERT OR REPLACE INTO khatm_ranges
+            (group_id, topic_id, start_verse_id, end_verse_id)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                request["group_id"],
+                request["topic_id"],
+                request["start_verse_id"],
+                request["end_verse_id"],
+            )
         )
-    )
-    logger.info("Processed start_khatm_ghoran for group_id=%s, topic_id=%s", 
-                request["group_id"], request["topic_id"])
+        # Verify insertion
+        range_check = await cursor.execute(
+            """
+            SELECT start_verse_id, end_verse_id 
+            FROM khatm_ranges 
+            WHERE group_id = ? AND topic_id = ?
+            """,
+            (request["group_id"], request["topic_id"])
+        )
+        range_result = await range_check.fetchone()
+        if not range_result:
+            logger.error("Failed to insert khatm_ranges: group_id=%s, topic_id=%s", 
+                        request["group_id"], request["topic_id"])
+            raise aiosqlite.Error("Failed to insert khatm_ranges")
+        logger.info("Processed start_khatm_ghoran for group_id=%s, topic_id=%s, start_verse_id=%d, end_verse_id=%d", 
+                   request["group_id"], request["topic_id"], range_result["start_verse_id"], range_result["end_verse_id"])
+    except Exception as e:
+        logger.error("Error in handle_start_khatm_ghoran: %s", e, exc_info=True)
+        raise
 
 async def handle_start_khatm_zekr(cursor, request):
     await cursor.execute(
@@ -725,6 +814,19 @@ async def handle_update_tag_timestamp(cursor, request):
     )
     logger.info("Processed update_tag_timestamp for group_id=%s", request["group_id"])
 
+async def handle_set_zekr_text(cursor, request):
+    """Handle setting zekr text for a topic."""
+    await cursor.execute(
+        """
+        UPDATE topics 
+        SET zekr_text = ?
+        WHERE group_id = ? AND topic_id = ? AND khatm_type = 'zekr'
+        """,
+        (request["zekr_text"], request["group_id"], request["topic_id"])
+    )
+    logger.info("Processed set_zekr_text for group_id=%s, topic_id=%s", 
+                request["group_id"], request["topic_id"])
+
 async def process_queue_request(request: Dict[str, Any]) -> None:
     handlers = {
         "update_user": handle_update_user,
@@ -764,7 +866,8 @@ async def process_queue_request(request: Dict[str, Any]) -> None:
         "hadis_on": handle_hadis_on,
         "hadis_off": handle_hadis_off,
         "khatm_number": handle_khatm_number,
-        "update_tag_timestamp": handle_update_tag_timestamp
+        "update_tag_timestamp": handle_update_tag_timestamp,
+        "set_zekr_text": handle_set_zekr_text
     }
     
     req_type = request.get("type")
@@ -773,8 +876,8 @@ async def process_queue_request(request: Dict[str, Any]) -> None:
         logger.warning("Unknown request type: %s", req_type)
         return
 
-    max_retries = 5
-    retry_delay = 0.5
+    max_retries = 10
+    retry_delay = 0.2
     for attempt in range(max_retries):
         try:
             await init_db_connection()
@@ -798,5 +901,6 @@ async def process_queue_request(request: Dict[str, Any]) -> None:
             await _db_connection.rollback()
             raise
 
-    logger.error("Failed to process queue request after %d retries: %s", max_retries, request)
+    logger.error("Failed to process queue request after %d retries: type=%s, request=%s", 
+                max_retries, req_type, request)
     raise aiosqlite.OperationalError("Failed to process queue request after retries")
