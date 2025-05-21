@@ -122,19 +122,11 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
             if not topic:
                 logger.warning("Topic not found: group_id=%s, topic_id=%s, user=%s", 
                               group_id, topic_id, update.effective_user.username or update.effective_user.first_name)
-                await update.message.reply_text(
-                    "تاپیک ختم تنظیم نشده.\n"
-                    "از topic یا 'تاپیک' استفاده کنید."
-                )
                 return
 
             if not topic["is_active"]:
                 logger.warning("Topic not active: group_id=%s, topic_id=%s, user=%s", 
                               group_id, topic_id, update.effective_user.username or update.effective_user.first_name)
-                await update.message.reply_text(
-                    "تاپیک ختم غیرفعال است.\n"
-                    "از khatm_zekr، khatm_salavat یا khatm_ghoran استفاده کنید."
-                )
                 return
 
             user_id = update.effective_user.id

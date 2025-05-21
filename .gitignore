@@ -4,3 +4,5 @@
 *.log
 venv
 test.py
+*.db-wal
+*.db-shm
