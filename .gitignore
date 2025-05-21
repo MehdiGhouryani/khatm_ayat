@@ -10,3 +10,4 @@ test.py
 /bot/database/__pycache__/
 /bot/utils/__pycache__/
 /tests/
+/bot/service/__pycache__/
