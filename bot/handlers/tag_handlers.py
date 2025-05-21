@@ -4,10 +4,16 @@ from datetime import datetime, timedelta
 from telegram import Update, ChatMember
 from telegram.ext import ContextTypes, CommandHandler
 from telegram.error import TelegramError
-from bot.utils.constants import MAIN_GROUP_ID, MAX_MESSAGE_LENGTH, TAG_COOLDOWN_HOURS, TAG_MESSAGE_DELAY
-from bot.database.db import fetch_one, fetch_all, write_queue
+from bot.utils.constants import MAIN_GROUP_ID, MAX_MESSAGE_LENGTH, TAG_MESSAGE_DELAY
+from bot.database.db import fetch_one, write_queue
 
 logger = logging.getLogger(__name__)
+
+# تنظیم کول‌داون به ۱ ساعت
+TAG_COOLDOWN_HOURS = 1
+
+# تعداد کاربران در هر پیام
+USERS_PER_MESSAGE = 30
 
 class TagManager:
     def __init__(self, context):
@@ -15,7 +21,7 @@ class TagManager:
         self.is_cancelled = False
 
     async def tag_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /tag command to tag active group members."""
+        """Handle /tag command to tag group members."""
         chat = update.effective_chat
         user = update.effective_user
 
@@ -36,6 +42,13 @@ class TagManager:
 
         context.chat_data["tag_task"] = self
         try:
+            # Ensure group exists in groups table
+            await write_queue.put({
+                "type": "update_user",
+                "group_id": chat.id,
+                "is_active": 1
+            })
+            
             await self._tag_all_members(chat)
             await write_queue.put({
                 "type": "update_tag_timestamp",
@@ -108,48 +121,31 @@ class TagManager:
                 logger.error("Error sending message in chat %s: %s", chat.id, e)
 
     async def _fetch_members(self, chat_id):
-        """Fetch active members from the users table."""
+        """Fetch all active members from the chat using Telegram API."""
         members = []
         try:
-            rows = await fetch_all(
-                """
-                SELECT user_id, username, first_name
-                FROM users
-                WHERE group_id = ? AND (total_zekr > 0 OR total_salavat > 0 OR total_ayat > 0)
-                """,
-                (chat_id,)
-            )
-            for row in rows:
-                user = type('User', (), {
-                    'id': row["user_id"],
-                    'username': row["username"],
-                    'first_name': row["first_name"],
-                    'is_bot': False
-                })()
-                if await self._is_active_member(user, chat_id):
-                    members.append(user)
-        except Exception as e:
-            logger.error("Error fetching members for chat %s: %s", chat_id, e)
-        return members
-
-    async def _is_active_member(self, user, chat_id):
-        """Check if user is an active member of the chat."""
-        try:
-            chat_member = await self.context.bot.get_chat_member(chat_id, user.id)
-            return chat_member.status in ["member", "administrator", "creator"]
+            async for member in self.context.bot.get_chat_members(chat_id):
+                if member.status in ["member", "administrator", "creator"] and not member.user.is_bot:
+                    members.append(member.user)
+                    logger.debug(f"Added member {member.user.id} ({member.user.username or member.user.first_name}) to members list")
+            logger.info(f"Total members fetched: {len(members)}")
+            return members
         except TelegramError as e:
-            logger.error("Error checking member status for user %s in chat %s: %s", user.id, chat_id, e)
-            return False
+            logger.error(f"Error fetching members for chat {chat_id}: {str(e)}")
+            return []
+        except Exception as e:
+            logger.error(f"Unexpected error while fetching members for chat {chat_id}: {str(e)}")
+            return []
 
     def _prepare_messages(self, members):
-        """Prepare messages with user tags."""
+        """Prepare messages with user tags, 30 users per message."""
         messages = []
         current_message = ""
         separator = " - "
 
-        for user in members:
+        for i, user in enumerate(members):
             tag = self._format_tag(user)
-            if len(current_message) + len(tag) + len(separator) > MAX_MESSAGE_LENGTH:
+            if i % USERS_PER_MESSAGE == 0 and i != 0:
                 messages.append(current_message.rstrip(separator))
                 current_message = ""
             current_message += tag + separator

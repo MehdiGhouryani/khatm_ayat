@@ -11,6 +11,12 @@ logger = logging.getLogger(__name__)
 write_queue = asyncio.Queue()
 _db_connection = None
 
+class DatabaseError(Exception):
+    """Custom exception class for database-related errors."""
+    def __init__(self, message: str, original_error: Exception = None):
+        super().__init__(message)
+        self.original_error = original_error
+
 async def init_db_connection():
     global _db_connection
     if _db_connection is None:
@@ -53,9 +59,8 @@ async def fetch_one(query: str, params: tuple = ()) -> Optional[Dict]:
         async with _db_connection.execute(query, params) as cursor:
             row = await cursor.fetchone()
             return dict(row) if row else None
-    except aiosqlite.Error as e:
-        logger.error("Database error in fetch_one: %s", e)
-        raise
+    except Exception as e:
+        raise DatabaseError(f"Error fetching single record: {str(e)}", e)
 
 async def fetch_all(query: str, params: tuple = ()) -> List[Dict]:
     try:
@@ -63,9 +68,8 @@ async def fetch_all(query: str, params: tuple = ()) -> List[Dict]:
         async with _db_connection.execute(query, params) as cursor:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
-    except aiosqlite.Error as e:
-        logger.error("Database error in fetch_all: %s", e)
-        raise
+    except Exception as e:
+        raise DatabaseError(f"Error fetching multiple records: {str(e)}", e)
 
 async def execute(query: str, params: tuple = ()) -> None:
     try:
@@ -434,33 +438,68 @@ async def handle_reset_zekr(cursor, request):
                 request["group_id"], request["topic_id"])
 
 async def handle_reset_kol(cursor, request):
-    await cursor.execute(
-        """
-        UPDATE topics 
-        SET current_total = 0, zekr_text = ''
-        WHERE group_id = ? AND topic_id = ?
-        """,
-        (request["group_id"], request["topic_id"])
-    )
-    if request["khatm_type"] == "ghoran":
-        row = await (await cursor.execute(
+    try:
+        # First check if topic exists and is active
+        topic = await (await cursor.execute(
             """
-            SELECT start_verse_id FROM khatm_ranges 
+            SELECT khatm_type, is_active 
+            FROM topics 
             WHERE group_id = ? AND topic_id = ?
             """,
             (request["group_id"], request["topic_id"])
         )).fetchone()
-        if row:
-            await cursor.execute(
+
+        if not topic:
+            logger.warning("Topic not found for reset_kol",
+                         extra={"group_id": request["group_id"], "topic_id": request["topic_id"]})
+            raise DatabaseError("تاپیک ختم تنظیم نشده است. از /topic یا 'تاپیک' استفاده کنید.")
+
+        if not topic["is_active"]:
+            logger.warning("Inactive topic for reset_kol",
+                         extra={"group_id": request["group_id"], "topic_id": request["topic_id"]})
+            raise DatabaseError("این تاپیک ختم غیرفعال است. لطفاً ابتدا یک ختم را فعال کنید.")
+
+        await cursor.execute(
+            """
+            DELETE FROM contributions WHERE group_id = ? AND topic_id = ?
+            """,
+            (request["group_id"], request["topic_id"])
+        )
+        await cursor.execute(
+            """
+            UPDATE topics 
+            SET current_total = 0, zekr_text = ''
+            WHERE group_id = ? AND topic_id = ?
+            """,
+            (request["group_id"], request["topic_id"])
+        )
+        if request["khatm_type"] == "ghoran":
+            row = await (await cursor.execute(
                 """
-                UPDATE topics 
-                SET current_verse_id = ?
+                SELECT start_verse_id FROM khatm_ranges 
                 WHERE group_id = ? AND topic_id = ?
                 """,
-                (row["start_verse_id"], request["group_id"], request["topic_id"])
-            )
-    logger.info("Processed reset_kol for group_id=%s, topic_id=%s", 
-                request["group_id"], request["topic_id"])
+                (request["group_id"], request["topic_id"])
+            )).fetchone()
+            if row:
+                await cursor.execute(
+                    """
+                    UPDATE topics 
+                    SET current_verse_id = ?
+                    WHERE group_id = ? AND topic_id = ?
+                    """,
+                    (row["start_verse_id"], request["group_id"], request["topic_id"])
+                )
+        logger.info("Successfully processed reset_kol", 
+                    extra={"group_id": request["group_id"], 
+                          "topic_id": request["topic_id"],
+                          "khatm_type": topic["khatm_type"]})
+    except Exception as e:
+        logger.error("Error in handle_reset_kol: %s", str(e),
+                    extra={"group_id": request["group_id"], 
+                          "topic_id": request["topic_id"],
+                          "error": str(e)})
+        raise DatabaseError(str(e) if isinstance(e, DatabaseError) else "خطا در بازنشانی ختم. لطفاً دوباره تلاش کنید.")
 
 async def handle_set_max(cursor, request):
     await cursor.execute(

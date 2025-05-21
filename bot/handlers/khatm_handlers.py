@@ -1,4 +1,3 @@
-
 import logging
 import asyncio
 from telegram import Update,constants
@@ -10,6 +9,21 @@ from bot.handlers.admin_handlers import is_admin, TEXT_COMMANDS
 from bot.utils.quran import QuranManager
 
 logger = logging.getLogger(__name__)
+
+# Add debug log for tracking function entry/exit
+def log_function_call(func):
+    async def wrapper(*args, **kwargs):
+        logger.debug(f"Entering function: {func.__name__}")
+        try:
+            result = await func(*args, **kwargs)
+            logger.debug(f"Exiting function: {func.__name__}")
+            return result
+        except Exception as e:
+            logger.error(f"Error in function {func.__name__}: {e}", exc_info=True)
+            raise
+    return wrapper
+
+@log_function_call
 async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle khatm-related messages for salavat, zekr, or Quran contributions."""
     try:
@@ -180,7 +194,12 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 "SELECT 1 FROM users WHERE user_id = ? AND group_id = ? AND topic_id = ?",
                 (user_id, group_id, topic_id)
             )
+            logger.debug("Checking user existence: user_id=%s, group_id=%s, topic_id=%s, exists=%s",
+                        user_id, group_id, topic_id, bool(user_exists))
+            
             if not user_exists:
+                logger.info("Creating new user record: user_id=%s, username=%s, group_id=%s, topic_id=%s",
+                          user_id, username, group_id, topic_id)
                 await fetch_one(
                     "INSERT INTO users (user_id, group_id, topic_id, username, first_name, total_salavat, total_zekr, total_ayat) VALUES (?, ?, ?, ?, ?, 0, 0, 0)",
                     (user_id, group_id, topic_id, username, first_name)
@@ -196,9 +215,11 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 "khatm_type": topic["khatm_type"],
                 "completed": topic["stop_number"] > 0 and topic["current_total"] + number >= topic["stop_number"],
             }
+            logger.debug("Preparing contribution request: %s", request)
 
             # Add verse information for Quran khatm
             if topic["khatm_type"] == "ghoran":
+                logger.debug("Processing Quran contribution: current_verse_id=%s", topic["current_verse_id"])
                 if not topic["current_verse_id"]:
                     logger.error("No current_verse_id found for Quran khatm: group_id=%s, topic_id=%s, user=%s", 
                                group_id, topic_id, username)
@@ -213,6 +234,9 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                     """,
                     (group_id, topic_id)
                 )
+                logger.debug("Retrieved verse range: group_id=%s, topic_id=%s, range=%s",
+                           group_id, topic_id, range_result)
+                
                 if not range_result:
                     logger.error("No verse range found for Quran khatm: group_id=%s, topic_id=%s, user=%s", 
                                group_id, topic_id, username)
@@ -222,6 +246,8 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 # Calculate new verse ID
                 current_verse_id = topic["current_verse_id"]
                 new_verse_id = min(current_verse_id + number, range_result["end_verse_id"])
+                logger.debug("Calculated new verse ID: current=%d, new=%d, max=%d",
+                           current_verse_id, new_verse_id, range_result["end_verse_id"])
                 
                 request.update({
                     "verse_id": new_verse_id,
@@ -229,6 +255,7 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                     "start_verse_id": range_result["start_verse_id"],
                     "end_verse_id": range_result["end_verse_id"]
                 })
+                logger.debug("Updated request with verse information: %s", request)
 
                 logger.info("Quran khatm contribution: current_verse_id=%d, new_verse_id=%d, user=%s", 
                           current_verse_id, new_verse_id, username)
@@ -240,12 +267,16 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
             previous_total = topic["current_total"]
             new_total = previous_total + number
             completed = request["completed"]
+            logger.debug("Contribution totals: previous=%d, new=%d, completed=%s",
+                        previous_total, new_total, completed)
 
             sepas_text = await get_random_sepas(group_id)
+            logger.debug("Retrieved sepas text for group_id=%s", group_id)
             
             # Get verse information for Quran khatm
             verses = None
             if topic["khatm_type"] == "ghoran":
+                logger.debug("Retrieving verse information for Quran khatm")
                 quran = await QuranManager.get_instance()
                 current_verse_id = topic["current_verse_id"]
                 verses = []
@@ -253,6 +284,7 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                     verse = quran.get_verse_by_id(current_verse_id + i)
                     if verse:
                         verses.append(verse)
+                logger.debug("Retrieved %d verses for display", len(verses))
             
             message = format_khatm_message(
                 topic["khatm_type"],
@@ -266,6 +298,7 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 max_display_verses=group["max_display_verses"],
                 completion_count=topic["completion_count"]
             )
+            logger.debug("Formatted khatm message for user")
 
             try:
                 await update.message.reply_text(message, parse_mode="Markdown")
@@ -304,6 +337,7 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
             
+@log_function_call
 async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle subtraction of khatm contributions by admin."""
     try:
@@ -314,8 +348,8 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         group_id = update.effective_chat.id
         topic_id = update.message.message_thread_id or group_id
         raw_text = update.message.text.strip()
-        logger.debug("Processing subtract command: group_id=%s, topic_id=%s, text=%s",
-                   group_id, topic_id, raw_text)
+        logger.debug("Processing subtract command: group_id=%s, topic_id=%s, text=%s, user_id=%s",
+                   group_id, topic_id, raw_text, update.effective_user.id)
 
         if not await is_admin(update, context):
             logger.warning("Non-admin user %s attempted subtract command: %s",
@@ -327,9 +361,12 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         number = None
         if context.args:
             number = parse_number(context.args[0])
+            logger.debug("Attempting to parse number from args: args=%s, result=%s", context.args[0], number)
         if number is None:
             # Try to parse from raw text (handles both -50 and /subtract 50 formats)
             number = parse_number(raw_text.replace("/subtract", "").strip())
+            logger.debug("Attempting to parse number from raw text: text=%s, result=%s", 
+                        raw_text.replace("/subtract", "").strip(), number)
         
         if number is None:
             logger.debug("Invalid number for subtract: %s, group_id=%s", raw_text, group_id)
@@ -342,6 +379,7 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Ensure number is positive for subtraction
         number = abs(number)
+        logger.debug("Normalized subtraction amount: %d", number)
 
         group = await fetch_one(
             """
@@ -350,6 +388,9 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             """,
             (group_id,)
         )
+        logger.debug("Retrieved group info: group_id=%s, active=%s", 
+                    group_id, group["is_active"] if group else None)
+
         if not group or not group["is_active"]:
             logger.debug("Group not found or inactive: group_id=%s", group_id)
             await update.message.reply_text(" از `start` یا 'شروع' استفاده کنید.",parse_mode=constants.ParseMode.MARKDOWN)
@@ -363,6 +404,10 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             """,
             (topic_id, group_id)
         )
+        logger.debug("Retrieved topic info: topic_id=%s, type=%s, active=%s", 
+                    topic_id, topic["khatm_type"] if topic else None, 
+                    topic["is_active"] if topic else None)
+
         if not topic:
             logger.debug("No topic found: topic_id=%s, group_id=%s", topic_id, group_id)
             await update.message.reply_text("❌ تاپیک ختم تنظیم نشده است. از `topic` یا 'تاپیک' استفاده کنید.",parse_mode=constants.ParseMode.MARKDOWN)
@@ -387,6 +432,10 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             """,
             (user_id, group_id, topic_id)
         )
+        logger.debug("Retrieved user contribution: user_id=%s, salavat=%s, zekr=%s, ayat=%s",
+                    user_id, user["total_salavat"] if user else None,
+                    user["total_zekr"] if user else None,
+                    user["total_ayat"] if user else None)
 
         # Get the appropriate total based on khatm type
         user_total = (
@@ -394,6 +443,7 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user["total_zekr"] if topic["khatm_type"] == "zekr" else
             user["total_ayat"] if topic["khatm_type"] == "ghoran" else 0
         ) if user else 0
+        logger.debug("Calculated user total for khatm_type %s: %d", topic["khatm_type"], user_total)
 
         # Validate subtraction amount
         if user_total < number:
@@ -504,6 +554,7 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 group_id, topic_id
             )
 
+@log_function_call
 async def start_from(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Set the starting number for a khatm (admin only) using write_queue."""
     try:
@@ -513,7 +564,8 @@ async def start_from(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         group_id = update.effective_chat.id
         topic_id = update.message.message_thread_id or group_id
-        logger.debug("Processing start_from command: group_id=%s, topic_id=%s", group_id, topic_id)
+        logger.debug("Processing start_from command: group_id=%s, topic_id=%s, user_id=%s", 
+                    group_id, topic_id, update.effective_user.id)
 
         if not await is_admin(update, context):
             logger.warning("Non-admin user %s attempted start_from command", update.effective_user.id)
@@ -530,6 +582,8 @@ async def start_from(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         number = parse_number(context.args[0])
+        logger.debug("Parsed start_from number: input=%s, result=%s", context.args[0], number)
+        
         if number is None:
             logger.debug("Invalid number format for start_from: %s, group_id=%s", context.args[0], group_id)
             await update.message.reply_text("❌ لطفاً یک عدد معتبر وارد کنید.")
@@ -548,6 +602,10 @@ async def start_from(update: Update, context: ContextTypes.DEFAULT_TYPE):
             """,
             (group_id,)
         )
+        logger.debug("Retrieved group info: group_id=%s, active=%s, max_number=%s",
+                    group_id, group["is_active"] if group else None,
+                    group["max_number"] if group else None)
+
         if not group:
             logger.debug("Group not found: group_id=%s", group_id)
             await update.message.reply_text(
@@ -563,6 +621,7 @@ async def start_from(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "از start یا 'شروع' استفاده کنید."
             )
             return
+
         # Check topic status
         topic = await fetch_one(
             """
@@ -571,6 +630,11 @@ async def start_from(update: Update, context: ContextTypes.DEFAULT_TYPE):
             """,
             (topic_id, group_id)
         )
+        logger.debug("Retrieved topic info: topic_id=%s, type=%s, current_total=%s, stop_number=%s",
+                    topic_id, topic["khatm_type"] if topic else None,
+                    topic["current_total"] if topic else None,
+                    topic["stop_number"] if topic else None)
+
         if not topic:
             logger.debug("No topic found: topic_id=%s, group_id=%s", topic_id, group_id)
             await update.message.reply_text(
@@ -586,9 +650,11 @@ async def start_from(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "از khatm_zekr، khatm_salavat یا khatm_ghoran استفاده کنید."
             )
             return
+
         # Validate number against stop_number if set
         if topic["stop_number"] and number > topic["stop_number"]:
-            logger.debug("Number exceeds stop_number: number=%d, stop_number=%d", number, topic["stop_number"])
+            logger.debug("Number exceeds stop_number: number=%d, stop_number=%d", 
+                        number, topic["stop_number"])
             await update.message.reply_text(
                 f"❌ عدد نمی‌تواند از تعداد هدف ({topic['stop_number']}) بیشتر باشد."
             )
@@ -596,7 +662,8 @@ async def start_from(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Validate number against max_number if set
         if group["max_number"] and number > group["max_number"]:
-            logger.debug("Number exceeds max_number: number=%d, max_number=%d", number, group["max_number"])
+            logger.debug("Number exceeds max_number: number=%d, max_number=%d", 
+                        number, group["max_number"])
             await update.message.reply_text(
                 f"❌ عدد نمی‌تواند از حداکثر مجاز ({group['max_number']}) بیشتر باشد."
             )
@@ -619,6 +686,8 @@ async def start_from(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "khatm_type": topic["khatm_type"],
             "completion_count": topic["completion_count"]
         }
+        logger.debug("Preparing start_from request: %s", request)
+        
         await write_queue.put(request)
         logger.info(
             "Khatm start_from queued: topic_id=%s, group_id=%s, number=%d, type=%s",
@@ -637,6 +706,7 @@ async def start_from(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"تعداد قبلی: {topic['current_total']}\n"
             f"تعداد جدید: {number}"
         )
+        logger.debug("Prepared confirmation message for start_from")
 
         try:
             await update.message.reply_text(message, parse_mode="Markdown")
@@ -669,11 +739,14 @@ async def start_from(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 group_id, topic_id
             )
 
+@log_function_call
 async def khatm_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show current khatm status."""
     try:
         group_id = update.effective_chat.id
         topic_id = update.message.message_thread_id or group_id
+        logger.debug("Processing khatm_status request: group_id=%s, topic_id=%s, user_id=%s",
+                    group_id, topic_id, update.effective_user.id)
 
         topic = await fetch_one(
             """
@@ -683,8 +756,14 @@ async def khatm_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             """,
             (group_id, topic_id)
         )
+        logger.debug("Retrieved topic info: topic_id=%s, type=%s, active=%s, current_total=%s",
+                    topic_id, topic["khatm_type"] if topic else None,
+                    topic["is_active"] if topic else None,
+                    topic["current_total"] if topic else None)
 
         if not topic:
+            logger.debug("No topic found for khatm_status: group_id=%s, topic_id=%s",
+                        group_id, topic_id)
             await update.message.reply_text("هیچ ختمی برای این گروه/تاپیک تعریف نشده است.")
             return
 
@@ -702,13 +781,20 @@ async def khatm_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"متن ذکر: {zekr_text}\n"
             f"تعداد هدف: {stop_number}"
         )
+        logger.debug("Prepared status message: active=%s, current_total=%s, stop_number=%s",
+                    is_active, current_total, stop_number)
+
         try:
             await update.message.reply_text(status)
+            logger.info("Sent khatm status message: group_id=%s, topic_id=%s, type=%s",
+                       group_id, topic_id, khatm_type)
         except TimedOut:
             logger.warning("Timed out sending khatm_status message for group_id=%s, topic_id=%s, retrying once",
                           group_id, topic_id)
             await asyncio.sleep(2)
             await update.message.reply_text(status)
+            logger.info("Sent khatm status message after retry: group_id=%s, topic_id=%s",
+                       group_id, topic_id)
 
     except TimedOut:
         logger.error("Timed out error in khatm_status: group_id=%s, topic_id=%s, user_id=%s",
@@ -720,4 +806,5 @@ async def khatm_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
         except TimedOut:
-            logger.warning("Timed out sending error message for group_id=%s, topic_id=%s",group_id, topic_id)
+            logger.warning("Timed out sending error message for group_id=%s, topic_id=%s",
+                         group_id, topic_id)

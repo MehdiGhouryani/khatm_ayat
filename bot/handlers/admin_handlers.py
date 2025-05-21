@@ -11,6 +11,19 @@ import time
 
 logger = logging.getLogger(__name__)
 
+# Add debug log for tracking function entry/exit
+def log_function_call(func):
+    async def wrapper(*args, **kwargs):
+        logger.debug(f"Entering function: {func.__name__}")
+        try:
+            result = await func(*args, **kwargs)
+            logger.debug(f"Exiting function: {func.__name__}")
+            return result
+        except Exception as e:
+            logger.error(f"Error in function {func.__name__}: {e}", exc_info=True)
+            raise
+    return wrapper
+
 TEXT_COMMANDS = {
     "lock on": {"handler": "lock_on", "admin_only": True, "aliases": ["قفل روشن"], "takes_args": False},
     "lock off": {"handler": "lock_off", "admin_only": True, "aliases": ["قفل خاموش"], "takes_args": False},
@@ -53,8 +66,12 @@ TEXT_COMMANDS = {
     "subtract": {"handler": "subtract_khatm", "admin_only": True, "aliases": ["کاهش"], "takes_args": True},
     "start from": {"handler": "start_from", "admin_only": True, "aliases": ["شروع از"], "takes_args": True}
 }
+
+@log_function_call
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
+        logger.info("Processing help command: user_id=%s, chat_id=%s", 
+                   update.effective_user.id, update.effective_chat.id)
         help_text = """
 **دستورات عمومی ربات**
 
@@ -141,60 +158,94 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 `max day 20` - حداکثر تعداد آیات روزانه هر فرد
 """
         await update.message.reply_text(help_text, parse_mode=constants.ParseMode.MARKDOWN)
+        logger.info("Help message sent successfully: user_id=%s", update.effective_user.id)
     except Exception as e:
-        logger.error("Error in help command: %s", e)
+        logger.error("Error in help command: %s", e, exc_info=True)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
-
-
-
-
+@log_function_call
 async def set_max_verses(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
+        logger.info("Processing set_max_verses: user_id=%s, chat_id=%s", 
+                   update.effective_user.id, update.effective_chat.id)
+        
         if not await is_admin(update, context):
+            logger.warning("Non-admin user attempted set_max_verses: user_id=%s", 
+                         update.effective_user.id)
             return
+            
         if not context.args:
+            logger.debug("No arguments provided for set_max_verses")
             await update.message.reply_text("لطفاً تعداد حداکثر آیات را وارد کنید. مثال: /set_max_verses 10")
             return
+            
         group_id = update.effective_chat.id
         max_verses = int(context.args[0])
+        logger.debug("Attempting to set max verses: group_id=%s, max_verses=%d", 
+                    group_id, max_verses)
+        
         if max_verses <= 0 or max_verses > 100:
+            logger.warning("Invalid max verses value: %d", max_verses)
             await update.message.reply_text("تعداد باید بین 1 تا 100 باشد.")
             return
+            
         await execute(
             "UPDATE groups SET max_display_verses = ? WHERE group_id = ?",
             (max_verses, group_id)
         )
+        logger.info("Successfully set max verses: group_id=%s, max_verses=%d", 
+                   group_id, max_verses)
+        
         await update.message.reply_text(f"حداکثر تعداد آیات نمایش به {max_verses} تنظیم شد.")
     except Exception as e:
-        logger.error("Error in set_max_verses: %s", e)
+        logger.error("Error in set_max_verses: %s", e, exc_info=True)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+@log_function_call
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
+        logger.info("Processing start command: user_id=%s, chat_id=%s", 
+                   update.effective_user.id, update.effective_chat.id)
+        
         if update.effective_chat.type not in ["group", "supergroup"]:
+            logger.warning("Start command used outside group: chat_type=%s", 
+                         update.effective_chat.type)
             await update.message.reply_text("این دستور فقط در گروه‌ها قابل استفاده است.")
             return
+            
         if not await is_admin(update, context):
+            logger.warning("Non-admin user attempted start command: user_id=%s", 
+                         update.effective_user.id)
             await update.message.reply_text("لطفاً من را مدیر کنید.")
             return
+            
         group_id = update.effective_chat.id
+        logger.debug("Checking existing group: group_id=%s", group_id)
+        
         group = await fetch_one("SELECT * FROM groups WHERE group_id = ?", (group_id,))
         if not group:
+            logger.info("Creating new group: group_id=%s", group_id)
             await execute(
                 "INSERT INTO groups (group_id, is_active, max_display_verses) VALUES (?, 1, 10)",
                 (group_id,)
             )
         else:
+            logger.info("Activating existing group: group_id=%s", group_id)
             await execute(
                 "UPDATE groups SET is_active = 1 WHERE group_id = ?",
                 (group_id,)
             )
+            
         await execute(
             "INSERT OR REPLACE INTO topics (topic_id, group_id, name, khatm_type) VALUES (?, ?, ?, ?)",
             (group_id, group_id, "اصلی", "salavat")
         )
+        logger.debug("Created/updated default topic: group_id=%s", group_id)
+        
         is_topic_enabled = bool(update.message.message_thread_id)
+        logger.info("Group topic status: group_id=%s, is_topic_enabled=%s", 
+                   group_id, is_topic_enabled)
+        
         if is_topic_enabled:
             await update.message.reply_text(
                 "گروه تاپیک‌دار است.\n"
@@ -209,38 +260,61 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ,parse_mode=constants.ParseMode.MARKDOWN
             )
     except Exception as e:
-        logger.error("Error in start command: %s", e)
+        logger.error("Error in start command: %s", e, exc_info=True)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+@log_function_call
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
+        logger.info("Processing stop command: user_id=%s, chat_id=%s", 
+                   update.effective_user.id, update.effective_chat.id)
+        
         if not await is_admin(update, context):
+            logger.warning("Non-admin user attempted stop command: user_id=%s", 
+                         update.effective_user.id)
             return
+            
         group_id = update.effective_chat.id
+        logger.debug("Deactivating group: group_id=%s", group_id)
+        
         await execute(
             "UPDATE groups SET is_active = 0 WHERE group_id = ?",
             (group_id,)
         )
+        logger.info("Successfully deactivated group: group_id=%s", group_id)
+        
         await update.message.reply_text("ربات خاموش شد.")
     except Exception as e:
-        logger.error("Error in stop command: %s", e)
+        logger.error("Error in stop command: %s", e, exc_info=True)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+@log_function_call
 async def topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
+        logger.info("Processing topic command: user_id=%s, chat_id=%s", 
+                   update.effective_user.id, update.effective_chat.id)
+        
         if not await is_admin(update, context):
+            logger.warning("Non-admin user attempted topic command: user_id=%s", 
+                         update.effective_user.id)
             return
+            
         if not context.args:
+            logger.debug("No topic name provided")
             await update.message.reply_text(
                 "لطفاً نام تاپیک را وارد کنید.\n"
                 "مثال: topic ختم صلوات\n"
                 "یا: topic ختم قرآن"
             )
             return
+            
         group_id = update.effective_chat.id
         is_topic_enabled = bool(update.message.message_thread_id)
+        logger.debug("Topic status check: group_id=%s, is_topic_enabled=%s", 
+                    group_id, is_topic_enabled)
 
         if not is_topic_enabled:
+            logger.warning("Topics not enabled for group: group_id=%s", group_id)
             await update.message.reply_text(
                 "❌ این گروه از تاپیک‌ها پشتیبانی نمی‌کند.\n"
                 "لطفاً تاپیک‌ها را در تنظیمات گروه فعال کنید."
@@ -249,19 +323,25 @@ async def topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         topic_id = update.message.message_thread_id or group_id
         topic_name = " ".join(context.args)
-
+        logger.debug("Processing topic update: group_id=%s, topic_id=%s, name=%s", 
+                    group_id, topic_id, topic_name)
 
         # Check if topic already exists
         existing_topic = await fetch_one(
             "SELECT name, khatm_type FROM topics WHERE topic_id = ? AND group_id = ?",
             (topic_id, group_id)
         )
+        logger.debug("Existing topic check: exists=%s, type=%s", 
+                    bool(existing_topic), 
+                    existing_topic["khatm_type"] if existing_topic else None)
 
         if existing_topic:
             await execute(
                 "UPDATE topics SET name = ? WHERE topic_id = ? AND group_id = ?",
                 (topic_name, topic_id, group_id)
             )
+            logger.info("Updated existing topic: group_id=%s, topic_id=%s, new_name=%s", 
+                       group_id, topic_id, topic_name)
             message = f"✅ نام تاپیک به '{topic_name}' تغییر کرد."
             if existing_topic["khatm_type"]:
                 message += f"\nنوع ختم فعلی: {existing_topic['khatm_type']}"
@@ -270,12 +350,15 @@ async def topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "INSERT INTO topics (topic_id, group_id, name, khatm_type) VALUES (?, ?, ?, ?)",
                 (topic_id, group_id, topic_name, "salavat")
             )
+            logger.info("Created new topic: group_id=%s, topic_id=%s, name=%s", 
+                       group_id, topic_id, topic_name)
             message = f"✅ تاپیک '{topic_name}' ایجاد شد."
 
         await execute(
             "UPDATE groups SET is_topic_enabled = 1 WHERE group_id = ?",
             (group_id,)
         )
+        logger.debug("Updated group topic status: group_id=%s", group_id)
 
         keyboard = [
             [
@@ -291,6 +374,8 @@ async def topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"در تاپیک {topic_name}، چه نوع ختمی انجام شود؟",
             reply_markup=reply_markup
         )
+        logger.info("Sent topic selection message: group_id=%s, topic_id=%s", 
+                   group_id, topic_id)
 
     except Exception as e:
         logger.error("Error in topic command: %s", e, exc_info=True)
@@ -298,26 +383,38 @@ async def topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "❌ خطایی رخ داد. لطفاً دوباره تلاش کنید یا با ادمین تماس بگیرید."
         )
 
+@log_function_call
 async def khatm_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         query = update.callback_query
         await query.answer()
+        logger.info("Processing khatm selection: user_id=%s, chat_id=%s, data=%s",
+                   update.effective_user.id, update.effective_chat.id, query.data)
 
         if not await is_admin(update, context):
+            logger.warning("Non-admin user attempted khatm selection: user_id=%s",
+                         update.effective_user.id)
             return
 
         group_id = update.effective_chat.id
         topic_id = query.message.message_thread_id or group_id
         khatm_type = query.data.replace("khatm_", "")
+        logger.debug("Khatm selection details: group_id=%s, topic_id=%s, type=%s",
+                    group_id, topic_id, khatm_type)
 
         # Validate khatm type
         if khatm_type not in ["salavat", "ghoran", "zekr"]:
+            logger.warning("Invalid khatm type selected: %s", khatm_type)
             await query.message.edit_text("❌ نوع ختم نامعتبر است.")
             return
 
         # Check if group is active
         group = await fetch_one("SELECT is_active FROM groups WHERE group_id = ?", (group_id,))
+        logger.debug("Group status check: group_id=%s, active=%s",
+                    group_id, group["is_active"] if group else None)
+
         if not group or not group["is_active"]:
+            logger.warning("Inactive group for khatm selection: group_id=%s", group_id)
             await query.message.edit_text(
                 " ابتدا با دستور `start` گروه را فعال کنید.",
                 parse_mode=constants.ParseMode.MARKDOWN
@@ -326,25 +423,35 @@ async def khatm_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Deactivate current khatm if exists
         old_khatm_type = await deactivate_current_khatm(group_id, topic_id)
+        logger.info("Deactivated current khatm: group_id=%s, topic_id=%s, old_type=%s",
+                   group_id, topic_id, old_khatm_type)
 
         # Update topic with new khatm type
         await execute(
             "UPDATE topics SET khatm_type = ?, is_active = 1 WHERE topic_id = ? AND group_id = ?",
             (khatm_type, topic_id, group_id)
         )
+        logger.info("Updated topic with new khatm type: group_id=%s, topic_id=%s, type=%s",
+                   group_id, topic_id, khatm_type)
 
         message = f" ختم {khatm_type} فعال شد."
 
         if khatm_type == "ghoran":
+            logger.debug("Setting up Quran khatm: group_id=%s, topic_id=%s", group_id, topic_id)
             quran = await QuranManager.get_instance()
             start_verse = quran.get_verse(1, 1)
             end_verse = quran.get_verse(114, 6)
             
             if not start_verse or not end_verse:
+                logger.error("Failed to get verse information: start=%s, end=%s",
+                           bool(start_verse), bool(end_verse))
                 await query.message.edit_text(
                     "❌ خطا در تنظیم محدوده قرآن. لطفاً دوباره تلاش کنید."
                 )
                 return
+
+            logger.debug("Setting verse range: start_id=%d, end_id=%d",
+                        start_verse['id'], end_verse['id'])
 
             await execute(
                 "INSERT OR REPLACE INTO khatm_ranges (group_id, topic_id, start_verse_id, end_verse_id) VALUES (?, ?, ?, ?)",
@@ -354,10 +461,13 @@ async def khatm_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "UPDATE topics SET current_verse_id = ? WHERE topic_id = ? AND group_id = ?",
                 (start_verse['id'], topic_id, group_id)
             )
+            logger.info("Successfully set up Quran khatm: group_id=%s, topic_id=%s",
+                       group_id, topic_id)
             
             message = "📖 ختم قرآن فعال شد."
 
         elif khatm_type == "zekr":
+            logger.debug("Setting up zekr khatm: group_id=%s, topic_id=%s", group_id, topic_id)
             context.user_data["awaiting_zekr"] = {
                 "topic_id": topic_id,
                 "group_id": group_id,
@@ -366,6 +476,7 @@ async def khatm_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message += "📿 لطفاً متن ذکر مورد نظر خود را ارسال کنید."
 
         elif khatm_type == "salavat":
+            logger.debug("Setting up salavat khatm: group_id=%s, topic_id=%s", group_id, topic_id)
             context.user_data["awaiting_salavat"] = {
                 "topic_id": topic_id,
                 "group_id": group_id,
@@ -374,6 +485,8 @@ async def khatm_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message += "\n\n🙏 لطفاً تعداد صلوات را وارد کنید 14000."
 
         await query.message.edit_text(message)
+        logger.info("Successfully completed khatm selection: group_id=%s, topic_id=%s, type=%s",
+                   group_id, topic_id, khatm_type)
 
     except Exception as e:
         logger.error("Error in khatm_selection: %s", e, exc_info=True)
@@ -460,18 +573,21 @@ async def start_khatm_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
         return ConversationHandler.END
 
+@log_function_call
 async def set_zekr_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Set the zekr text for an active khatm."""
     try:
-        logger.info("Starting set_zekr_text: user_id=%s, chat_id=%s", 
+        logger.info("Processing set_zekr_text: user_id=%s, chat_id=%s",
                    update.effective_user.id, update.effective_chat.id)
 
         if not update.effective_chat or update.effective_chat.type not in ["group", "supergroup"]:
-            logger.warning("set_zekr_text called in non-group chat: user_id=%s", update.effective_user.id)
+            logger.warning("set_zekr_text called in non-group chat: user_id=%s",
+                         update.effective_user.id)
             return ConversationHandler.END
 
         if not await is_admin(update, context):
-            logger.warning("Non-admin user attempted set_zekr_text: user_id=%s", update.effective_user.id)
+            logger.warning("Non-admin user attempted set_zekr_text: user_id=%s",
+                         update.effective_user.id)
             return ConversationHandler.END
 
         if "awaiting_zekr" not in context.user_data:
@@ -483,7 +599,7 @@ async def set_zekr_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         state_data = context.user_data["awaiting_zekr"]
         current_time = time.time()
         state_age = current_time - state_data.get("timestamp", 0)
-        logger.info("Checking state age: current_time=%s, state_timestamp=%s, age=%s seconds", 
+        logger.info("Checking state age: current_time=%s, state_timestamp=%s, age=%s seconds",
                    current_time, state_data.get("timestamp"), state_age)
 
         if state_age > 600:  # 10 minutes timeout
@@ -494,28 +610,34 @@ async def set_zekr_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         group_id = update.effective_chat.id
         topic_id = update.message.message_thread_id or group_id
-        logger.info("Processing set_zekr_text: group_id=%s, topic_id=%s", group_id, topic_id)
+        logger.info("Processing set_zekr_text: group_id=%s, topic_id=%s",
+                   group_id, topic_id)
 
         # Verify topic is active and of type zekr
         topic = await fetch_one(
             "SELECT is_active, khatm_type FROM topics WHERE topic_id = ? AND group_id = ?",
             (topic_id, group_id)
         )
-        
+        logger.debug("Retrieved topic info: exists=%s, active=%s, type=%s",
+                    bool(topic), topic["is_active"] if topic else None,
+                    topic["khatm_type"] if topic else None)
+
         if not topic:
-            logger.error("Topic not found: group_id=%s, topic_id=%s", group_id, topic_id)
+            logger.error("Topic not found: group_id=%s, topic_id=%s",
+                        group_id, topic_id)
             context.user_data.clear()
             await update.message.reply_text("تاپیک ختم یافت نشد.")
             return ConversationHandler.END
 
         if not topic["is_active"]:
-            logger.warning("Topic not active: group_id=%s, topic_id=%s", group_id, topic_id)
+            logger.warning("Topic not active: group_id=%s, topic_id=%s",
+                         group_id, topic_id)
             context.user_data.clear()
             await update.message.reply_text("ختم ذکر فعال نیست. لطفاً ابتدا ختم ذکر را شروع کنید.")
             return ConversationHandler.END
 
         if topic["khatm_type"] != "zekr":
-            logger.warning("Topic is not zekr type: group_id=%s, topic_id=%s, type=%s", 
+            logger.warning("Topic is not zekr type: group_id=%s, topic_id=%s, type=%s",
                          group_id, topic_id, topic["khatm_type"])
             context.user_data.clear()
             await update.message.reply_text("این تاپیک ختم ذکر نیست.")
@@ -543,7 +665,8 @@ async def set_zekr_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "zekr_text": zekr_text
         }
         await write_queue.put(request)
-        logger.info("Queued zekr text update: group_id=%s, topic_id=%s", group_id, topic_id)
+        logger.info("Queued zekr text update: group_id=%s, topic_id=%s",
+                   group_id, topic_id)
 
         # Clear the awaiting state
         context.user_data.clear()
@@ -559,23 +682,37 @@ async def set_zekr_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
         return ConversationHandler.END
 
+@log_function_call
 async def set_range(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
+        logger.info("Processing set_range command: user_id=%s, chat_id=%s",
+                   update.effective_user.id, update.effective_chat.id)
+
         if not update.message or not update.message.text:
+            logger.warning("Invalid message format for set_range")
             await update.message.reply_text("لطفاً محدوده را وارد کنید.")
             return
+
         if not await is_admin(update, context):
+            logger.warning("Non-admin user attempted set_range: user_id=%s",
+                         update.effective_user.id)
             return
+
         group_id = update.effective_chat.id
         topic_id = update.message.message_thread_id or group_id
         text = update.message.text.strip()
+        logger.debug("Processing range text: %s", text)
+
         pattern = r'(?:سوره|surah)?\s*(\d+)\s*(?:آیه|ایه|ayah)?\s*(\d+)\s*(?:تا|to|-)\s*(?:سوره|surah)?\s*(\d+)\s*(?:آیه|ایه|ayah)?\s*(\d+)|(\d+):(\d+)\s*(?:تا|to|-)\s*(\d+):(\d+)'
         match = re.search(pattern, text, re.IGNORECASE)
+
         if not match:
+            logger.warning("Invalid range format: text=%s", text)
             await update.message.reply_text(
                 "فرمت نامعتبر است. مثال: `/set_range سوره 1 آیه 1 تا سوره 2 آیه 10`"
             )
             return
+
         if match.group(1):
             start_surah = parse_number(match.group(1))
             start_ayah = parse_number(match.group(2))
@@ -586,18 +723,33 @@ async def set_range(update: Update, context: ContextTypes.DEFAULT_TYPE):
             start_ayah = parse_number(match.group(6))
             end_surah = parse_number(match.group(7))
             end_ayah = parse_number(match.group(8))
+
+        logger.debug("Parsed range values: start_surah=%s, start_ayah=%s, end_surah=%s, end_ayah=%s",
+                    start_surah, start_ayah, end_surah, end_ayah)
+
         if not (1 <= start_surah <= 114 and 1 <= end_surah <= 114):
+            logger.warning("Invalid surah numbers: start=%d, end=%d", start_surah, end_surah)
             await update.message.reply_text("شماره سوره باید بین ۱ تا ۱۱۴ باشد.")
             return
+
         quran = await QuranManager.get_instance()
         start_verse = quran.get_verse(start_surah, start_ayah)
         end_verse = quran.get_verse(end_surah, end_ayah)
+        logger.debug("Retrieved verse information: start_verse=%s, end_verse=%s",
+                    bool(start_verse), bool(end_verse))
+
         if not start_verse or not end_verse:
+            logger.error("Invalid verse numbers: start=%d:%d, end=%d:%d",
+                        start_surah, start_ayah, end_surah, end_ayah)
             await update.message.reply_text(f"آیه نامعتبر است: {start_surah}:{start_ayah} یا {end_surah}:{end_ayah} وجود ندارد.")
             return
+
         if start_verse['id'] > end_verse['id']:
+            logger.warning("Invalid verse order: start_id=%d, end_id=%d",
+                         start_verse['id'], end_verse['id'])
             await update.message.reply_text("آیه شروع باید قبل از آیه پایان باشد.")
             return
+
         await execute(
             "INSERT OR REPLACE INTO khatm_ranges (group_id, topic_id, start_verse_id, end_verse_id) VALUES (?, ?, ?, ?)",
             (group_id, topic_id, start_verse['id'], end_verse['id'])
@@ -606,41 +758,67 @@ async def set_range(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "UPDATE topics SET khatm_type = ?, current_verse_id = ? WHERE topic_id = ? AND group_id = ?",
             ("ghoran", start_verse['id'], topic_id, group_id)
         )
+        logger.info("Successfully set verse range: group_id=%s, topic_id=%s, start_id=%d, end_id=%d",
+                   group_id, topic_id, start_verse['id'], end_verse['id'])
+
         await update.message.reply_text(
             f"محدوده ختم تنظیم شد: از {start_verse['surah_name']} آیه {start_ayah} تا {end_verse['surah_name']} آیه {end_ayah}"
         )
+
     except Exception as e:
-        logger.error("Error in set_range command: %s", e)
+        logger.error("Error in set_range command: %s", e, exc_info=True)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+@log_function_call
 async def deactivate_current_khatm(group_id: int, topic_id: int) -> str:
     """Deactivate the current khatm and return its type."""
     try:
+        logger.debug("Attempting to deactivate khatm: group_id=%s, topic_id=%s", 
+                    group_id, topic_id)
+        
         topic = await fetch_one(
             "SELECT khatm_type FROM topics WHERE group_id = ? AND topic_id = ? AND is_active = 1",
             (group_id, topic_id)
         )
+        logger.debug("Found active topic: exists=%s, type=%s", 
+                    bool(topic), topic["khatm_type"] if topic else None)
+        
         if topic:
             await execute(
                 "UPDATE topics SET is_active = 0 WHERE group_id = ? AND topic_id = ?",
                 (group_id, topic_id)
             )
+            logger.info("Deactivated khatm: group_id=%s, topic_id=%s, type=%s",
+                       group_id, topic_id, topic["khatm_type"])
             return topic["khatm_type"]
         return ""
     except Exception as e:
         logger.error("Error deactivating khatm: group_id=%s, topic_id=%s, error=%s",
-                    group_id, topic_id, e)
+                    group_id, topic_id, e, exc_info=True)
         return ""
     
     
 
+@log_function_call
 async def start_khatm_salavat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
+        logger.info("Processing start_khatm_salavat: user_id=%s, chat_id=%s",
+                   update.effective_user.id, update.effective_chat.id)
+        
         if not await is_admin(update, context):
+            logger.warning("Non-admin user attempted start_khatm_salavat: user_id=%s",
+                         update.effective_user.id)
             return
+            
         group_id = update.effective_chat.id
         topic_id = update.message.message_thread_id or group_id
+        logger.debug("Starting salavat khatm: group_id=%s, topic_id=%s",
+                    group_id, topic_id)
+        
         old_khatm_type = await deactivate_current_khatm(group_id, topic_id)
+        logger.info("Deactivated previous khatm: group_id=%s, topic_id=%s, old_type=%s",
+                   group_id, topic_id, old_khatm_type)
+        
         request = {
             "type": "start_khatm_salavat",
             "group_id": group_id,
@@ -649,23 +827,28 @@ async def start_khatm_salavat(update: Update, context: ContextTypes.DEFAULT_TYPE
             "khatm_type": "salavat"
         }
         await write_queue.put(request)
+        logger.debug("Queued start_khatm_salavat request: %s", request)
+        
         message = (
-        "🙏 ختم صلوات فعال شد.\n"
-        "لطفاً تعداد صلوات مورد نظر را وارد نمایید.\n"
-        "مثال: 14000"
+            "🙏 ختم صلوات فعال شد.\n"
+            "لطفاً تعداد صلوات مورد نظر را وارد نمایید.\n"
+            "مثال: 14000"
         )
 
         await update.message.reply_text(message)
         context.user_data["awaiting_salavat"] = {"topic_id": topic_id, "group_id": group_id}
+        logger.info("Set awaiting_salavat state: group_id=%s, topic_id=%s",
+                   group_id, topic_id)
         return 2
     except Exception as e:
-        logger.error("Error in start_khatm_salavat: %s", e)
+        logger.error("Error in start_khatm_salavat: %s", e, exc_info=True)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
         return ConversationHandler.END
 
+@log_function_call
 async def start_khatm_ghoran(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        logger.info("Starting start_khatm_ghoran: user_id=%s, chat_id=%s", 
+        logger.info("Processing start_khatm_ghoran: user_id=%s, chat_id=%s",
                    update.effective_user.id, update.effective_chat.id)
 
         if not update.message or not update.message.text:
@@ -674,15 +857,20 @@ async def start_khatm_ghoran(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return
 
         if not await is_admin(update, context):
-            logger.warning("Non-admin user attempted start_khatm_ghoran: user_id=%s", update.effective_user.id)
+            logger.warning("Non-admin user attempted start_khatm_ghoran: user_id=%s",
+                         update.effective_user.id)
             return
 
         group_id = update.effective_chat.id
         topic_id = update.message.message_thread_id or group_id
-        logger.info("Processing start_khatm_ghoran: group_id=%s, topic_id=%s", group_id, topic_id)
+        logger.debug("Starting Quran khatm: group_id=%s, topic_id=%s",
+                    group_id, topic_id)
 
         # Check if group is active
         group = await fetch_one("SELECT is_active FROM groups WHERE group_id = ?", (group_id,))
+        logger.debug("Group status check: group_id=%s, active=%s",
+                    group_id, group["is_active"] if group else None)
+
         if not group:
             logger.error("Group not found in database: group_id=%s", group_id)
             await update.message.reply_text("❌ گروه در سیستم ثبت نشده است.")
@@ -741,45 +929,73 @@ async def start_khatm_ghoran(update: Update, context: ContextTypes.DEFAULT_TYPE)
             raise
 
         # Send confirmation message
-        message ="✅ ختم قرآن فعال شد."
+        message = "✅ ختم قرآن فعال شد."
         await update.message.reply_text(message)
-        logger.info("Successfully started Quran khatm: group_id=%s, topic_id=%s", group_id, topic_id)
+        logger.info("Successfully started Quran khatm: group_id=%s, topic_id=%s",
+                   group_id, topic_id)
 
     except Exception as e:
         logger.error("Critical error in start_khatm_ghoran: group_id=%s, topic_id=%s, error=%s",
                     group_id, topic_id, e, exc_info=True)
         await update.message.reply_text("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+@log_function_call
 async def set_salavat_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
+        logger.info("Processing set_salavat_count: user_id=%s, chat_id=%s",
+                   update.effective_user.id, update.effective_chat.id)
+
         if "awaiting_salavat" not in context.user_data:
+            logger.warning("No awaiting_salavat state found: user_id=%s",
+                         update.effective_user.id)
             await update.message.reply_text("هیچ ختم صلواتی در انتظار تنظیم نیست.")
             return
+
         if not await is_admin(update, context):
+            logger.warning("Non-admin user attempted set_salavat_count: user_id=%s",
+                         update.effective_user.id)
             return
+
         salavat_data = context.user_data.pop("awaiting_salavat")
+        logger.debug("Retrieved salavat data: topic_id=%s, group_id=%s",
+                    salavat_data["topic_id"], salavat_data["group_id"])
+
         count = parse_number(update.message.text)
+        logger.debug("Parsed salavat count: input=%s, result=%s",
+                    update.message.text, count)
+
         if count is None or count <= 0:
+            logger.warning("Invalid salavat count: %s", count)
             await update.message.reply_text("لطفاً یک عدد معتبر و مثبت وارد کنید (مثال: 14000).")
             return 2
+
         await execute(
             "UPDATE topics SET stop_number = ? WHERE topic_id = ? AND group_id = ?",
             (count, salavat_data["topic_id"], salavat_data["group_id"])
         )
+        logger.info("Set salavat count: group_id=%s, topic_id=%s, count=%d",
+                   salavat_data["group_id"], salavat_data["topic_id"], count)
+
         await update.message.reply_text(f"✅ ختم {count} صلوات تنظیم شد. ختم صلوات آغاز شد!")
         return ConversationHandler.END
+
     except Exception as e:
-        logger.error("Error in set_salavat_count: %s", e)
+        logger.error("Error in set_salavat_count: %s", e, exc_info=True)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
         return 2
 
+@log_function_call
 async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     try:
         user_id = update.effective_user.id
         chat_id = update.effective_chat.id
+        logger.debug("Checking admin status: user_id=%s, chat_id=%s", user_id, chat_id)
+        
         admins = await context.bot.get_chat_administrators(chat_id)
         is_admin = any(admin.user.id == user_id for admin in admins)
+        logger.debug("Admin check result: user_id=%s, is_admin=%s", user_id, is_admin)
+        
         return is_admin
     except Exception as e:
-        logger.error("Error checking admin status: %s", e)
+        logger.error("Error checking admin status: %s", e, exc_info=True)
         return False

@@ -7,16 +7,25 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
+class QuranError(Exception):
+    """Custom exception class for Quran-related errors."""
+    def __init__(self, message: str, original_error: Exception = None):
+        super().__init__(message)
+        self.original_error = original_error
+
 class QuranManager:
     _instance = None
 
     @classmethod
     async def get_instance(cls):
         """Get the singleton instance of QuranManager, initializing it if necessary."""
-        if cls._instance is None:
-            cls._instance = cls()
-            await cls._instance.initialize()
-        return cls._instance
+        try:
+            if not cls._instance:
+                cls._instance = cls()
+                await cls._instance.initialize()
+            return cls._instance
+        except Exception as e:
+            raise QuranError(f"Error initializing QuranManager: {str(e)}", e)
 
     def __init__(self, json_path: str = None):
         """Initialize QuranManager with the path to the JSON file."""
@@ -74,10 +83,10 @@ class QuranManager:
 
     def get_verse_by_id(self, verse_id: int) -> Optional[Dict]:
         logger.debug("Fetching verse by id: verse_id=%d", verse_id)
-        verse = self.verse_by_id.get(verse_id)
-        if not verse:
-            logger.debug("Verse not found: verse_id=%d", verse_id)
-        return verse
+        try:
+            return self.verse_by_id.get(verse_id)
+        except Exception as e:
+            raise QuranError(f"Error fetching verse {verse_id}: {str(e)}", e)
 
     def get_verses_in_range(self, start_id: int, end_id: int) -> List[Dict]:
         logger.debug("Fetching verses from id %d to %d", start_id, end_id)
