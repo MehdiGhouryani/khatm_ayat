@@ -1,6 +1,7 @@
+
 import logging
 import asyncio
-from telegram import Update
+from telegram import Update,constants
 from telegram.ext import ContextTypes
 from telegram.error import TimedOut, BadRequest
 from bot.database.db import fetch_one, fetch_all, write_queue
@@ -94,13 +95,20 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
             )
             if not group:
                 logger.warning("Group not found: group_id=%s, user=%s", 
-                             group_id, update.effective_user.username or update.effective_user.first_name)
-                await update.message.reply_text("گروه در ربات ثبت نشده است. لطفاً از دستور /start یا 'شروع' استفاده کنید.")
+                              group_id, update.effective_user.username or update.effective_user.first_name)
+                await update.message.reply_text(
+                    "گروه ثبت نشده.\n"
+                    "از start یا 'شروع' استفاده کنید."
+                )
                 return
+
             if not group["is_active"]:
                 logger.warning("Group not active: group_id=%s, user=%s", 
-                             group_id, update.effective_user.username or update.effective_user.first_name)
-                await update.message.reply_text("ربات در این گروه فعال نیست. از /start یا 'شروع' استفاده کنید.")
+                              group_id, update.effective_user.username or update.effective_user.first_name)
+                await update.message.reply_text(
+                    "گروه فعال نیست.\n"
+                    "از start یا 'شروع' استفاده کنید."
+                )
                 return
 
             topic = await fetch_one(
@@ -113,13 +121,20 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
             )
             if not topic:
                 logger.warning("Topic not found: group_id=%s, topic_id=%s, user=%s", 
-                             group_id, topic_id, update.effective_user.username or update.effective_user.first_name)
-                await update.message.reply_text("تاپیک ختم تنظیم نشده است. از /topic یا 'تاپیک' استفاده کنید.")
+                              group_id, topic_id, update.effective_user.username or update.effective_user.first_name)
+                await update.message.reply_text(
+                    "تاپیک ختم تنظیم نشده.\n"
+                    "از topic یا 'تاپیک' استفاده کنید."
+                )
                 return
+
             if not topic["is_active"]:
                 logger.warning("Topic not active: group_id=%s, topic_id=%s, user=%s", 
-                             group_id, topic_id, update.effective_user.username or update.effective_user.first_name)
-                await update.message.reply_text("این تاپیک ختم غیرفعال است. لطفاً از /khatm_zekr، /khatm_salavat یا /khatm_ghoran برای فعال‌سازی ختم استفاده کنید.")
+                              group_id, topic_id, update.effective_user.username or update.effective_user.first_name)
+                await update.message.reply_text(
+                    "تاپیک ختم غیرفعال است.\n"
+                    "از khatm_zekr، khatm_salavat یا khatm_ghoran استفاده کنید."
+                )
                 return
 
             user_id = update.effective_user.id
@@ -208,7 +223,7 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 if not range_result:
                     logger.error("No verse range found for Quran khatm: group_id=%s, topic_id=%s, user=%s", 
                                group_id, topic_id, username)
-                    await update.message.reply_text("❌ محدوده آیات تنظیم نشده است. لطفاً از دستور /set_range استفاده کنید.")
+                    await update.message.reply_text("❌ محدوده آیات تنظیم نشده است. لطفاً از دستور `set_range` استفاده کنید.",parse_mode=constants.ParseMode.MARKDOWN)
                     return
 
                 # Calculate new verse ID
@@ -344,7 +359,7 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         if not group or not group["is_active"]:
             logger.debug("Group not found or inactive: group_id=%s", group_id)
-            await update.message.reply_text("❌ گروه فعال نیست. از /start یا 'شروع' استفاده کنید.")
+            await update.message.reply_text(" از `start` یا 'شروع' استفاده کنید.",parse_mode=constants.ParseMode.MARKDOWN)
             return
 
         topic = await fetch_one(
@@ -357,13 +372,13 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         if not topic:
             logger.debug("No topic found: topic_id=%s, group_id=%s", topic_id, group_id)
-            await update.message.reply_text("❌ تاپیک ختم تنظیم نشده است. از /topic یا 'تاپیک' استفاده کنید.")
+            await update.message.reply_text("❌ تاپیک ختم تنظیم نشده است. از `topic` یا 'تاپیک' استفاده کنید.",parse_mode=constants.ParseMode.MARKDOWN)
             return
         if not topic["is_active"]:
             logger.debug("Topic is not active: topic_id=%s", topic_id)
             await update.message.reply_text(
-                "❌ این تاپیک ختم غیرفعال است.\n"
-                "لطفاً از /khatm_zekr، /khatm_salavat یا /khatm_ghoran برای فعال‌سازی ختم استفاده کنید."
+                "برای فعال‌سازی، لطفاً از دستورات `khatm_zekr`، `khatm_salavat` یا `khatm_ghoran` استفاده کنید.",
+                parse_mode=constants.ParseMode.MARKDOWN
             )
             return
 
@@ -542,14 +557,19 @@ async def start_from(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         if not group:
             logger.debug("Group not found: group_id=%s", group_id)
-            await update.message.reply_text("❌ گروه در ربات ثبت نشده است. از /start یا 'شروع' استفاده کنید.")
+            await update.message.reply_text(
+                "گروه ثبت نشده.\n"
+                "از start یا 'شروع' استفاده کنید."
+            )
             return
 
         if not group["is_active"]:
             logger.debug("Group is inactive: group_id=%s", group_id)
-            await update.message.reply_text("❌ گروه فعال نیست. از /start یا 'شروع' استفاده کنید.")
+            await update.message.reply_text(
+                "گروه فعال نیست.\n"
+                "از start یا 'شروع' استفاده کنید."
+            )
             return
-
         # Check topic status
         topic = await fetch_one(
             """
@@ -560,17 +580,19 @@ async def start_from(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         if not topic:
             logger.debug("No topic found: topic_id=%s, group_id=%s", topic_id, group_id)
-            await update.message.reply_text("❌ تاپیک ختم تنظیم نشده است. از /topic یا 'تاپیک' استفاده کنید.")
+            await update.message.reply_text(
+                "تاپیک ختم تنظیم نشده.\n"
+                "از topic یا 'تاپیک' استفاده کنید."
+            )
             return
 
         if not topic["is_active"]:
             logger.debug("Topic is not active: topic_id=%s", topic_id)
             await update.message.reply_text(
-                "❌ این تاپیک ختم غیرفعال است.\n"
-                "لطفاً از /khatm_zekr، /khatm_salavat یا /khatm_ghoran برای فعال‌سازی ختم استفاده کنید."
+                "تاپیک ختم غیرفعال است.\n"
+                "از khatm_zekr، khatm_salavat یا khatm_ghoran استفاده کنید."
             )
             return
-
         # Validate number against stop_number if set
         if topic["stop_number"] and number > topic["stop_number"]:
             logger.debug("Number exceeds stop_number: number=%d, stop_number=%d", number, topic["stop_number"])

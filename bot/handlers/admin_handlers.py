@@ -128,15 +128,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 `cancel_tag` - لغو عملیات تگ کردن
 
 ----------------------------------------
-**قابلیت‌های گروه‌های تاپیک‌دار**
-
 نام‌گذاری تاپیک:
 `topic اصلی` - تنظیم نام تاپیک 
 
-تنظیم نوع ختم در تاپیک:
-`khatm salavat` - شروع ختم صلوات در تاپیک
-`khatm ghoran` - شروع ختم قرآن در تاپیک
-`khatm zekr` - شروع ختم ذکر در تاپیک
 
 ----------------------------------------
 **دستورات مخصوص ختم قرآن**
@@ -202,17 +196,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         is_topic_enabled = bool(update.message.message_thread_id)
         if is_topic_enabled:
-            await update.message.reply_text("گروه تاپیک‌دار است. لطفاً تاپیک‌ها را با /topic تنظیم کنید.")
-        else:
-            message = (
-                "گروه فاقد تاپیک است و حالت بدون تاپیک فعال شد.\n\n"
-                "برای شروع ختم، لطفاً یکی از دستورات زیر را وارد کنید:\n"
-                "• ختم ذکر: /khatm_zekr\n"
-                "• ختم صلوات: /khatm_salavat\n"
-                "• ختم قرآن: /khatm_ghoran"
+            await update.message.reply_text(
+                "گروه تاپیک‌دار است.\n"
+                "از topic یا 'تاپیک' برای تنظیم استفاده کنید."
             )
-            await update.message.reply_text(message)
-        await update.message.reply_text("ربات با موفقیت فعال شد و آماده به کار است.")
+        else:
+            await update.message.reply_text(
+                "برای شروع ختم، از یکی از دستورات زیر استفاده کنید:\n"
+                "- `khatm zekr` (ختم ذکر)\n"
+                "- `khatm salavat` (ختم صلوات)\n"
+                "- `khatm ghoran` (ختم قرآن)"
+                ,parse_mode=constants.ParseMode.MARKDOWN
+            )
     except Exception as e:
         logger.error("Error in start command: %s", e)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
@@ -220,7 +215,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not await is_admin(update, context):
-            await update.message.reply_text("فقط ادمین می‌تواند ربات را خاموش کند.")
             return
         group_id = update.effective_chat.id
         await execute(
@@ -236,15 +230,13 @@ async def topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not await is_admin(update, context):
             return
-
         if not context.args:
             await update.message.reply_text(
-                "📝 لطفاً نام تاپیک را وارد کنید.\n"
-                "مثال: /topic ختم صلوات\n"
-                "یا: /topic ختم قرآن"
+                "لطفاً نام تاپیک را وارد کنید.\n"
+                "مثال: topic ختم صلوات\n"
+                "یا: topic ختم قرآن"
             )
             return
-
         group_id = update.effective_chat.id
         is_topic_enabled = bool(update.message.message_thread_id)
 
@@ -327,7 +319,8 @@ async def khatm_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
         group = await fetch_one("SELECT is_active FROM groups WHERE group_id = ?", (group_id,))
         if not group or not group["is_active"]:
             await query.message.edit_text(
-                "❌ گروه فعال نیست. ابتدا با دستور /start گروه را فعال کنید."
+                " ابتدا با دستور `start` گروه را فعال کنید.",
+                parse_mode=constants.ParseMode.MARKDOWN
             )
             return
 
@@ -411,7 +404,7 @@ async def start_khatm_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
         group = await fetch_one("SELECT is_active FROM groups WHERE group_id = ?", (group_id,))
         if not group or not group["is_active"]:
             logger.warning("Group not active for start_khatm_zekr: group_id=%s", group_id)
-            await update.message.reply_text("گروه فعال نیست. از /start یا 'شروع' استفاده کنید.")
+            await update.message.reply_text("گروه فعال نیست. از `start` یا 'شروع' استفاده کنید.",parse_mode=constants.ParseMode.MARKDOWN)
             return ConversationHandler.END
 
         # Check if there's already an active khatm
@@ -455,8 +448,6 @@ async def start_khatm_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
                    group_id, topic_id, context.user_data["awaiting_zekr"]["timestamp"])
         
         message = "📿 ختم ذکر فعال شد.\nلطفاً متن ذکر را وارد کنید.\nمثال: سبحان‌الله"
-        if old_khatm_type:
-            message = f"✅ ختم {old_khatm_type} غیرفعال شد.\n" + message
 
         await update.message.reply_text(message)
         logger.info("Sent zekr text prompt message")
@@ -663,8 +654,7 @@ async def start_khatm_salavat(update: Update, context: ContextTypes.DEFAULT_TYPE
         "لطفاً تعداد صلوات مورد نظر را وارد نمایید.\n"
         "مثال: 14000"
         )
-        if old_khatm_type:
-            message = f"✅ ختم {old_khatm_type} غیرفعال شد.\n" + message
+
         await update.message.reply_text(message)
         context.user_data["awaiting_salavat"] = {"topic_id": topic_id, "group_id": group_id}
         return 2
@@ -751,12 +741,7 @@ async def start_khatm_ghoran(update: Update, context: ContextTypes.DEFAULT_TYPE)
             raise
 
         # Send confirmation message
-        message = (
-            f"✅ ختم قرآن فعال شد:\n"
-            f"از {start_verse['surah_name']} آیه 1\n"
-            f"تا {end_verse['surah_name']} آیه 6\n\n"
-            f"حالا می‌توانید تعداد آیات را وارد کنید."
-        )
+        message ="✅ ختم قرآن فعال شد."
         await update.message.reply_text(message)
         logger.info("Successfully started Quran khatm: group_id=%s, topic_id=%s", group_id, topic_id)
 
@@ -771,7 +756,6 @@ async def set_salavat_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("هیچ ختم صلواتی در انتظار تنظیم نیست.")
             return
         if not await is_admin(update, context):
-            await update.message.reply_text("فقط ادمین می‌تواند تعداد صلوات را تنظیم کند.")
             return
         salavat_data = context.user_data.pop("awaiting_salavat")
         count = parse_number(update.message.text)
