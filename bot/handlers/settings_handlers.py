@@ -930,12 +930,11 @@ async def delete_after(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not await is_admin(update, context):
             logger.warning("Non-admin user %s attempted /delete_after", update.effective_user.id)
-            await update.message.reply_text("فقط ادمین می‌تواند حذف خودکار پیام‌ها را تنظیم کند.")
             return
 
         if not context.args:
             logger.warning("Delete_after command called without arguments")
-            await update.message.reply_text("لطفاً تعداد دقیقه را وارد کنید (۱ تا ۱۴۴۰). مثال: /delete_after 5")
+            await update.message.reply_text("لطفاً تعداد دقیقه را وارد کنید. مثال: `delete_after 5`")
             return
 
         minutes = parse_number(context.args[0])

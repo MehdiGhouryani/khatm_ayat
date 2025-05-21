@@ -1,15 +1,16 @@
 import asyncio
 import logging
 import backoff
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ConversationHandler
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ConversationHandler, ChatMemberHandler
 from telegram import Update
 from telegram.ext import ContextTypes
-from bot.handlers.admin_handlers import start, stop, topic, khatm_selection, set_zekr_text, help_command, set_range, start_khatm_zekr, start_khatm_salavat, start_khatm_ghoran, set_salavat_count, TEXT_COMMANDS
+from bot.handlers.admin_handlers import start, stop, topic, khatm_selection, set_zekr_text, help_command, set_range, start_khatm_zekr, start_khatm_salavat, start_khatm_ghoran, set_khatm_target_number, TEXT_COMMANDS
 from bot.handlers.khatm_handlers import handle_khatm_message, subtract_khatm, start_from, khatm_status
-from bot.handlers.settings_handlers import reset_zekr, reset_kol, stop_on, stop_on_off, set_max, max_off, set_min, min_off, sepas_on, sepas_off, add_sepas, set_number, number_off, time_off, time_off_disable, lock_on, lock_off, jam_off, jam_on, set_completion_message, reset_daily, reset_off, reset_number_on, reset_number_off, delete_after, delete_off, reset_daily_groups, reset_periodic_topics, handle_new_message
+from bot.handlers.settings_handlers import reset_zekr, reset_kol, stop_on, stop_on_off, set_max, max_off, set_min, min_off, sepas_on, sepas_off, add_sepas, number_off, time_off, time_off_disable, lock_on, lock_off, jam_off, jam_on, set_completion_message, reset_daily, reset_off, reset_number_on, reset_number_off, delete_after, delete_off, reset_daily_groups, reset_periodic_topics, handle_new_message
 from bot.handlers.stats_handlers import show_total_stats, show_ranking
 from bot.handlers.hadith_handlers import hadis_on, hadis_off, send_daily_hadith
 from bot.handlers.tag_handlers import setup_handlers, TagManager
+from bot.handlers.user_handlers import chat_member_handler, message_handler as user_message_handler
 from bot.handlers.error_handlers import error_handler
 from bot.database.db import init_db, process_queue_request, execute, write_queue, close_db_connection
 from bot.utils.constants import DEFAULT_SEPAS_TEXTS, DAILY_HADITH_TIME, DAILY_RESET_TIME, DAILY_PERIOD_RESET_TIME
@@ -19,7 +20,7 @@ from bot.utils.logging_config import setup_logging
 logger = logging.getLogger(__name__)
 logging.getLogger("apscheduler").setLevel(logging.WARNING)
 
-ZEKR_STATE, SALAVAT_STATE, QURAN_STATE = range(1, 4)
+ZEKR_STATE = 1
 
 @backoff.on_exception(backoff.expo, Exception, max_tries=3, max_time=10)
 async def process_queue_periodically(context: ContextTypes.DEFAULT_TYPE):
@@ -40,7 +41,7 @@ def map_handlers():
         "start_khatm_zekr": start_khatm_zekr,
         "start_khatm_salavat": start_khatm_salavat,
         "start_khatm_ghoran": start_khatm_ghoran,
-        "set_salavat_count": set_salavat_count,
+        "set_khatm_target_number": set_khatm_target_number,
         "reset_zekr": reset_zekr,
         "reset_kol": reset_kol,
         "stop_on": stop_on,
@@ -52,7 +53,6 @@ def map_handlers():
         "sepas_on": sepas_on,
         "sepas_off": sepas_off,
         "add_sepas": add_sepas,
-        "set_number": set_number,
         "number_off": number_off,
         "time_off": time_off,
         "time_off_disable": time_off_disable,
@@ -73,6 +73,7 @@ def map_handlers():
         "set_completion_message": set_completion_message,
         "subtract_khatm": subtract_khatm,
         "start_from": start_from,
+        "khatm_status": khatm_status,
         "tag_command": lambda update, context: TagManager(context).tag_command(update, context),
         "cancel_tag": lambda update, context: TagManager(context).cancel_tag(update, context),
     }
@@ -110,8 +111,6 @@ def register_handlers(app: Application):
         ],
         states={
             ZEKR_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_zekr_text)],
-            SALAVAT_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_salavat_count)],
-            QURAN_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_range)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         per_message=False,
@@ -126,7 +125,7 @@ def register_handlers(app: Application):
         CommandHandler("reset_kol", reset_kol),
         CommandHandler("stop_on", stop_on),
         CommandHandler("stop_on_off", stop_on_off),
-        CommandHandler("number", set_number),
+        CommandHandler("number", set_khatm_target_number),
         CommandHandler("number_off", number_off),
         CommandHandler("reset_number_on", reset_number_off),
         CommandHandler("reset_number_off", reset_number_off),
@@ -172,6 +171,10 @@ def register_handlers(app: Application):
         filters.Regex(start_from_pattern) & filters.ChatType.GROUPS,
         start_from
     ))
+    
+    # افزودن هندلرهای جدید برای مدیریت کاربران
+    app.add_handler(ChatMemberHandler(chat_member_handler, ChatMemberHandler.CHAT_MEMBER))
+    app.add_handler(MessageHandler(filters.ALL, user_message_handler), group=999)  # اولویت پایین
     
     app.add_handler(MessageHandler(filters.COMMAND, ignore_command))
     app.add_error_handler(error_handler)

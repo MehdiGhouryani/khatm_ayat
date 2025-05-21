@@ -171,14 +171,24 @@ async def show_total_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"دفعات تکمیل: {completion_count}"
             )
         else:
-            zekr_text = topic["zekr_text"] or khatm_type
-            message = (
-                f"آمار ختم {khatm_type}:\n"
-                f"متن: {zekr_text}\n"
-                f"تعداد فعلی: {current_total}\n"
-                f"هدف: {stop_number}\n"
-                f"دفعات تکمیل: {completion_count}"
-            )
+            if khatm_type == "zekr":
+                actual_zekr_text = topic["zekr_text"] or "تعیین نشده"
+                message = (
+                    f"آمار ختم ذکر:\n"
+                    f"متن: {actual_zekr_text}\n"
+                    f"تعداد فعلی: {current_total}\n"
+                    f"هدف: {stop_number}\n"
+                    f"دفعات تکمیل: {completion_count}"
+                )
+            elif khatm_type == "salavat":
+                message = (
+                    f"آمار ختم صلوات:\n"
+                    f"تعداد فعلی: {current_total}\n"
+                    f"هدف: {stop_number}\n"
+                    f"دفعات تکمیل: {completion_count}"
+                )
+            else:
+                message = "نوع ختم ناشناخته است."
 
         try:
             await update.message.reply_text(message)

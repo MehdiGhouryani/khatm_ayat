@@ -15,6 +15,9 @@ DEFAULT_SEPAS_TEXTS = [
 ]
 KHATM_TYPES = ["salavat", "zekr", "ghoran"]
 
+# Set very high default limits for zekr and salavat
+DEFAULT_MAX_NUMBER = 100000000000  # 100 billion
+
 DAILY_HADITH_TIME = time(hour=8, minute=0)
 DAILY_RESET_TIME = time(hour=0, minute=0)
 DAILY_PERIOD_RESET_TIME = time(hour=0, minute=5)

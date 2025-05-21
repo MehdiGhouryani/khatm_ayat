@@ -58,58 +58,97 @@ def format_khatm_message(
     completion_count: int = 0
 ) -> str:
     try:
+        separator = "➖➖➖➖➖➖➖➖➖➖➖"
+        final_sepas = f" **{sepas_text}** 🌱" if sepas_text else ""
+
         if khatm_type == "ghoran":
             if not verses:
-                return "خطا: اطلاعات آیات موجود نیست."
+                return "**خطا: اطلاعات آیات موجود نیست.** 🌱"
             
-            current_surah = verses[0]['surah_name']
-            parts = [
-                f"📖 *{amount} آیه* ثبت شد!",
-                f"نام سوره فعلی: {current_surah}",
-                f"تعداد ختم قرآن انجام شده: {completion_count}",
-                "———————————————————\n",
-            ]
-        
-            for v in verses[:max_display_verses]:
-                verse_no = v.get('id')
-                text = v.get('text', 'متن آیه موجود نیست')
-                parts.append(f"{verse_no}: {text}")
-                parts.append("")
+            processed_verse_count = amount
+            if amount < 0:
+                processed_verse_count = abs(amount)
+            
+            header = f"**📖 {processed_verse_count} آیه ثبت شد!**"
+            if amount < 0:
+                header = f"**📖 {processed_verse_count} آیه کسر شد!**"
 
-            if len(verses) > max_display_verses:
-                parts.append("... (برای آیات بیشتر، محدوده را بررسی کنید)")
-                parts.append("")
-        
-            if sepas_text:
-                parts.append("———————————————————\n")
-                parts.append(f"🌱 {sepas_text} 🌱")
-        
+            parts = [header]
+            if verses:
+                current_surah_name = verses[0].get('surah_name', 'نامشخص')
+                parts.extend([
+                    f"**نام سوره فعلی:** {current_surah_name}",
+                    f"**تعداد ختم قرآن انجام شده:** {completion_count}",
+                    separator
+                ])
+            
+                verses_to_display = verses[:max_display_verses]
+                for v_idx, v in enumerate(verses_to_display):
+                    verse_no_in_surah = str(v.get('ayah_number')) if v.get('ayah_number') is not None else ''
+                    text = v.get('text', 'متن آیه موجود نیست')
+                    parts.append(f"{verse_no_in_surah}: {text}")
+                    
+                    if v_idx < len(verses_to_display) - 1:
+                        parts.append("")
+
+                # Log values for debugging the attention message condition
+                logger.debug(f"Attention message debug: amount={amount}, len(verses_to_display)={len(verses_to_display)}, max_display_verses={max_display_verses}, verses_list_length={len(verses) if verses else 0}")
+
+                if amount > len(verses_to_display) and amount > max_display_verses:
+                    parts.append(separator)
+                    parts.append(f"**توجه:** {len(verses_to_display)} آیه از {amount} آیه خوانده شده نمایش داده شد. (حداکثر {max_display_verses} آیه برای نمایش)")
+                elif len(verses) > max_display_verses:
+                    parts.append("... (ادامه آیات)")
+            
+            if final_sepas:
+                parts.append(separator)
+                parts.append(final_sepas)
+            else:
+                parts.append(separator)
+                parts.append("🌱 **التماس دعا** 🌱")
+
             message = "\n".join(parts)
             return message
         
         elif khatm_type == "salavat":
-            message = (
-                f"🙏 *{amount} صلوات* ثبت شد!\n"
-                f"جمع کل: {new_total} صلوات\n"
-            )
-            if sepas_text:
-                message += f"🌱 {sepas_text} 🌱\n"
+            action_text = "ثبت شد" if amount >= 0 else "کسر شد"
+            abs_amount = abs(amount)
+            message_parts = [
+                f"**🙏 {abs_amount} صلوات {action_text}!**",
+                f"**جمع کل:** {new_total} صلوات\n"
+            ]
+            if final_sepas:
+                message_parts.append(separator)
+                message_parts.append(final_sepas)
+            else:
+                message_parts.append(separator)
+                message_parts.append("🌱 **التماس دعا** 🌱")
+            message = "\n".join(message_parts)
             return message
 
         elif khatm_type == "zekr":
             if not zekr_text:
-                return "خطا: متن ذکر مشخص نشده است."
-            message = (
-                f"📿 *{amount} {zekr_text}* ثبت شد!\n"
-                f"جمع کل: {new_total} {zekr_text}\n"
-            )
-            if sepas_text:
-                message += f"🌱 {sepas_text} 🌱\n"
+                return "**خطا: متن ذکر مشخص نشده است.** 🌱"
+            txt_vasat='مورد'
+            action_text = "ثبت شد" if amount >= 0 else "کسر شد"
+            abs_amount = abs(amount)
+            message_parts = [
+                f"**ذکر :** {zekr_text}\n",
+                f"**📿 {abs_amount} {txt_vasat} {action_text}!**\n",
+                f"**جمع کل:** {new_total}\n"
+            ]
+            if final_sepas:
+                message_parts.append(separator)
+                message_parts.append(final_sepas)
+            else:
+                message_parts.append(separator)
+                message_parts.append("🌱 **التماس دعا** 🌱")
+            message = "\n".join(message_parts)
             return message
 
         else:
-            return "خطا: نوع ختم نامعتبر است."
+            return "**خطا: نوع ختم نامعتبر است.** 🌱"
 
     except Exception as e:
-        logger.error(f"Error formatting khatm message: {e}")
-        return "خطا در تولید پیام ختم."
+        logger.error(f"Error formatting khatm message: {e}", exc_info=True)
+        return "**خطا در تولید پیام ختم.** 🌱"

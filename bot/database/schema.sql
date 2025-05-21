@@ -2,7 +2,7 @@ CREATE TABLE IF NOT EXISTS groups (
     group_id INTEGER PRIMARY KEY,
     is_active INTEGER DEFAULT 0,
     is_topic_enabled INTEGER DEFAULT 0,
-    max_number INTEGER DEFAULT 1000000,
+    max_number INTEGER DEFAULT 100000000000,
     min_number INTEGER DEFAULT 0,
     max_ayat INTEGER DEFAULT 100,
     min_ayat INTEGER DEFAULT 1,

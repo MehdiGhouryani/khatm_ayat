@@ -152,42 +152,57 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                        group_id, topic_id, topic["khatm_type"], username, topic["current_total"])
 
             # Step 3: Handle awaiting states for zekr or salavat
-            if context.user_data.get("awaiting_zekr") or context.user_data.get("awaiting_salavat"):
-                logger.info("Found awaiting state: awaiting_zekr=%s, awaiting_salavat=%s, user=%s", 
-                          bool(context.user_data.get("awaiting_zekr")), 
-                          bool(context.user_data.get("awaiting_salavat")),
-                          username)
+            if context.user_data.get("awaiting_zekr"):
+                logger.info("Found awaiting_zekr state: user=%s", username)
                 
                 if await is_admin(update, context):
-                    if context.user_data.get("awaiting_zekr"):
-                        logger.info("Processing awaiting_zekr state for user=%s", username)
-                        from bot.handlers.admin_handlers import set_zekr_text
-                        await set_zekr_text(update, context)
-                        return
-                    elif context.user_data.get("awaiting_salavat"):
-                        logger.info("Processing awaiting_salavat state for user=%s", username)
-                        from bot.handlers.admin_handlers import set_salavat_count
-                        await set_salavat_count(update, context)
-                        return
+                    logger.info("Processing awaiting_zekr state for user=%s", username)
+                    from bot.handlers.admin_handlers import set_zekr_text
+                    await set_zekr_text(update, context)
+                    return
                 else:
-                    logger.warning("Non-admin user attempted to set zekr/salavat: user=%s", username)
-
+                    logger.warning("Non-admin user attempted to set zekr: user=%s", username)
+                    # Clear the flag if a non-admin attempts to use it, to prevent it from blocking normal number inputs
+                    context.user_data.pop("awaiting_zekr", None)
+            
             # Step 4: Process number input for contributions
             number = parse_number(raw_text)
             if number is None:
                 logger.debug("Message is not a number: text=%s, user=%s", raw_text, username)
                 if topic["khatm_type"] == "ghoran":
+                    logger.info("Informed user about numeric input for Quran khatm: group_id=%s, user=%s", group_id, username)
                     return
                 return
 
             logger.info("Parsed number from message: number=%d, user=%s", number, username)
 
             # Step 5: Validate number range
-            if number < group["min_number"] or number > group["max_number"]:
-                logger.warning("Number out of range: number=%d, min=%d, max=%d, user=%s", 
-                             number, group["min_number"], group["max_number"], username)
-                await update.message.reply_text(f"عدد باید بین {group['min_number']} و {group['max_number']} باشد.")
-                return
+            is_admin_user = await is_admin(update, context)
+            
+            # Allow negative numbers for admins
+            if number < 0 and is_admin_user:
+                # Admin can use negative numbers, proceed with the contribution
+                pass
+            # For non-admins or positive numbers, apply normal validations
+            elif topic["khatm_type"] not in ["salavat", "zekr"]:
+                if number < group["min_number"] or number > group["max_number"]:
+                    logger.warning("Number out of range (non-salavat/non-zekr): number=%d, min=%d, max=%d, user=%s",
+                                 number, group["min_number"], group["max_number"], username)
+                    await update.message.reply_text(f"عدد باید بین {group['min_number']} و {group['max_number']} باشد.")
+                    return
+            elif number < group["min_number"]: # For salavat and zekr, only check min_number if it's greater than 0
+                if group["min_number"] > 0: # Only enforce min_number if it's set to a positive value
+                    logger.warning("Number less than min_number (salavat/zekr): number=%d, min=%d, user=%s",
+                                    number, group["min_number"], username)
+                    await update.message.reply_text(f"عدد باید حداقل {group['min_number']} باشد.")
+                    return
+            # Check max_number for salavat and zekr only if it's set and user is not admin
+            elif topic["khatm_type"] in ["salavat", "zekr"] and not is_admin_user:
+                if number > group["max_number"] and group["max_number"] > 0:
+                    logger.warning("Number exceeds max_number (salavat/zekr): number=%d, max=%d, user=%s",
+                                 number, group["max_number"], username)
+                    await update.message.reply_text(f"عدد نمی‌تواند بیشتر از {group['max_number']} باشد.")
+                    return
 
             # Step 5.5: Ensure user exists in users table
             user_exists = await fetch_one(
@@ -213,90 +228,118 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 "user_id": user_id,
                 "amount": number,
                 "khatm_type": topic["khatm_type"],
-                "completed": topic["stop_number"] > 0 and topic["current_total"] + number >= topic["stop_number"],
             }
-            logger.debug("Preparing contribution request: %s", request)
+            logger.debug("Initial contribution request: %s", request)
 
-            # Add verse information for Quran khatm
+            current_topic_total_before_contribution = topic["current_total"] # Store for display
+
             if topic["khatm_type"] == "ghoran":
-                logger.debug("Processing Quran contribution: current_verse_id=%s", topic["current_verse_id"])
+                logger.debug("Processing Quran contribution details: current_db_verse_id=%s", topic["current_verse_id"])
                 if not topic["current_verse_id"]:
-                    logger.error("No current_verse_id found for Quran khatm: group_id=%s, topic_id=%s, user=%s", 
-                               group_id, topic_id, username)
+                    logger.error("No current_verse_id for Quran khatm: group_id=%s, topic_id=%s", group_id, topic_id)
                     await update.message.reply_text("❌ اطلاعات آیات موجود نیست. لطفاً ابتدا محدوده ختم قرآن را تنظیم کنید.")
                     return
 
-                # Get verse range
                 range_result = await fetch_one(
-                    """
-                    SELECT start_verse_id, end_verse_id 
-                    FROM khatm_ranges WHERE group_id = ? AND topic_id = ?
-                    """,
+                    "SELECT start_verse_id, end_verse_id FROM khatm_ranges WHERE group_id = ? AND topic_id = ?",
                     (group_id, topic_id)
                 )
-                logger.debug("Retrieved verse range: group_id=%s, topic_id=%s, range=%s",
-                           group_id, topic_id, range_result)
-                
                 if not range_result:
-                    logger.error("No verse range found for Quran khatm: group_id=%s, topic_id=%s, user=%s", 
-                               group_id, topic_id, username)
-                    await update.message.reply_text("❌ محدوده آیات تنظیم نشده است. لطفاً از دستور `set_range` استفاده کنید.",parse_mode=constants.ParseMode.MARKDOWN)
+                    logger.error("No verse range for Quran khatm: group_id=%s, topic_id=%s", group_id, topic_id)
+                    await update.message.reply_text("❌ محدوده آیات تنظیم نشده. از `set_range` استفاده کنید.", parse_mode=constants.ParseMode.MARKDOWN)
                     return
 
-                # Calculate new verse ID
-                current_verse_id = topic["current_verse_id"]
-                new_verse_id = min(current_verse_id + number, range_result["end_verse_id"])
-                logger.debug("Calculated new verse ID: current=%d, new=%d, max=%d",
-                           current_verse_id, new_verse_id, range_result["end_verse_id"])
+                current_db_verse_id = topic["current_verse_id"] # Verse ID before this contribution
+                
+                # Number of verses to actually display and advance the main khatm by
+                if number < 0:
+                    # For negative numbers, use the actual number for display and advancement
+                    displayed_amount = number
+                else:
+                    displayed_amount = min(number, group["max_display_verses"])
+                request["displayed_amount"] = displayed_amount # For db handler
+
+                # Potential new verse_id after this contribution (based on displayed amount for topic progress)
+                new_topic_verse_id = current_db_verse_id + displayed_amount
+                
+                # Don't allow verse_id to go below start_verse_id
+                if new_topic_verse_id < range_result["start_verse_id"]:
+                    new_topic_verse_id = range_result["start_verse_id"]
+
+                is_quran_khatm_completed = (new_topic_verse_id >= range_result["end_verse_id"])
+                request["completed"] = is_quran_khatm_completed
+                
+                # The verse_id to store in topics table for the *next* contribution (topic progress)
+                topic_verse_id_for_db_update = min(new_topic_verse_id, range_result["end_verse_id"])
                 
                 request.update({
-                    "verse_id": new_verse_id,
-                    "current_verse_id": new_verse_id,
-                    "start_verse_id": range_result["start_verse_id"],
-                    "end_verse_id": range_result["end_verse_id"]
+                    "verse_id": topic_verse_id_for_db_update, # ID of the last verse effectively read for topic progress
+                    "current_verse_id": topic_verse_id_for_db_update, # This is what will be stored in topics.current_verse_id
+                    "start_verse_id": range_result["start_verse_id"], # For reference in queue processor if needed
+                    "end_verse_id": range_result["end_verse_id"]   # For reference
                 })
-                logger.debug("Updated request with verse information: %s", request)
-
-                logger.info("Quran khatm contribution: current_verse_id=%d, new_verse_id=%d, user=%s", 
-                          current_verse_id, new_verse_id, username)
+                logger.info("Quran khatm request update: to_store_topic_current_verse_id=%d, completed=%s, displayed_amount=%d, user_amount=%d",
+                            topic_verse_id_for_db_update, is_quran_khatm_completed, displayed_amount, number)
+            else: # For salavat and zekr
+                if number < 0:
+                    # For negative contributions, we don't check completion
+                    request["completed"] = False
+                else:
+                    request["completed"] = topic["stop_number"] > 0 and (current_topic_total_before_contribution + number >= topic["stop_number"])
+                request["displayed_amount"] = number # For non-Quran, displayed_amount is same as amount
 
             await write_queue.put(request)
-            logger.info("Queued contribution: group_id=%s, topic_id=%s, amount=%d, khatm_type=%s, user=%s",
-                       group_id, topic_id, number, topic["khatm_type"], username)
+            logger.info("Queued contribution: %s", request)
 
-            previous_total = topic["current_total"]
-            new_total = previous_total + number
-            completed = request["completed"]
-            logger.debug("Contribution totals: previous=%d, new=%d, completed=%s",
-                        previous_total, new_total, completed)
-
+            # Prepare data for the confirmation message
             sepas_text = await get_random_sepas(group_id)
-            logger.debug("Retrieved sepas text for group_id=%s", group_id)
             
-            # Get verse information for Quran khatm
-            verses = None
+            verses_for_display = []
             if topic["khatm_type"] == "ghoran":
-                logger.debug("Retrieving verse information for Quran khatm")
                 quran = await QuranManager.get_instance()
-                current_verse_id = topic["current_verse_id"]
-                verses = []
-                for i in range(min(number, 10)):  # Get up to 10 verses
-                    verse = quran.get_verse_by_id(current_verse_id + i)
+                # For display, we show verses starting from current_db_verse_id (before this contribution)
+                # The number of verses to show is min(user_input_number, max_display_verses_setting)
+                current_verse_id_for_display_fetch = current_db_verse_id # This is topic["current_verse_id"] before update
+                
+                if number < 0:
+                    # For negative numbers, we don't display any verses
+                    num_verses_to_fetch_for_display = 0
+                else:
+                    num_verses_to_fetch_for_display = min(displayed_amount, group["max_display_verses"])
+
+                logger.debug(f"Verse display pre-fetch: topic_id={topic_id}, group_id={group_id}, current_verse_id_for_display_fetch={current_verse_id_for_display_fetch}, num_verses_to_fetch_for_display={num_verses_to_fetch_for_display}, user_input_number={displayed_amount}, group_max_display={group['max_display_verses']}")
+
+                for i in range(num_verses_to_fetch_for_display):
+                    verse = quran.get_verse_by_id(current_verse_id_for_display_fetch + i)
                     if verse:
-                        verses.append(verse)
-                logger.debug("Retrieved %d verses for display", len(verses))
+                        verses_for_display.append(verse)
+                    else:
+                        logger.warning("Verse not found for display: id %d. Stopping verse fetch.", current_verse_id_for_display_fetch + i)
+                        break
+                logger.debug("Retrieved %d verses for display list", len(verses_for_display))
             
+            # topic["current_total"] is the value BEFORE this contribution.
+            # topic["completion_count"] is also the value BEFORE this contribution.
+            
+            # For Quran, new_total for display purposes should reflect topic advancement (by displayed_amount)
+            # For Salavat/Zekr, new_total is based on the full number.
+            new_total_for_display = current_topic_total_before_contribution
+            if topic["khatm_type"] == "ghoran":
+                new_total_for_display += displayed_amount
+            else:
+                new_total_for_display += number
+
             message = format_khatm_message(
-                topic["khatm_type"],
-                previous_total,
-                number,
-                new_total,
-                sepas_text,
-                group_id,
-                topic["zekr_text"],
-                verses=verses,
-                max_display_verses=group["max_display_verses"],
-                completion_count=topic["completion_count"]
+                khatm_type=topic["khatm_type"],
+                previous_total=current_topic_total_before_contribution,
+                amount=number, # User's actual input number (e.g., 60)
+                new_total=new_total_for_display, # New total reflecting topic progress
+                sepas_text=sepas_text,
+                group_id=group_id,
+                zekr_text=topic["zekr_text"],
+                verses=verses_for_display,
+                max_display_verses=group["max_display_verses"], # Pass the setting to formatter
+                completion_count=topic["completion_count"] # Pass current completion_count
             )
             logger.debug("Formatted khatm message for user")
 
@@ -597,14 +640,13 @@ async def start_from(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Check group status
         group = await fetch_one(
             """
-            SELECT is_active, max_number 
+            SELECT is_active 
             FROM groups WHERE group_id = ?
             """,
             (group_id,)
         )
-        logger.debug("Retrieved group info: group_id=%s, active=%s, max_number=%s",
-                    group_id, group["is_active"] if group else None,
-                    group["max_number"] if group else None)
+        logger.debug("Retrieved group info: group_id=%s, active=%s",
+                    group_id, group["is_active"] if group else None)
 
         if not group:
             logger.debug("Group not found: group_id=%s", group_id)
@@ -651,7 +693,7 @@ async def start_from(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # Validate number against stop_number if set
+        # تنها موردی که چک می‌شود، بیشتر بودن از stop_number است (اگر تعیین شده باشد)
         if topic["stop_number"] and number > topic["stop_number"]:
             logger.debug("Number exceeds stop_number: number=%d, stop_number=%d", 
                         number, topic["stop_number"])
@@ -660,14 +702,8 @@ async def start_from(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # Validate number against max_number if set
-        if group["max_number"] and number > group["max_number"]:
-            logger.debug("Number exceeds max_number: number=%d, max_number=%d", 
-                        number, group["max_number"])
-            await update.message.reply_text(
-                f"❌ عدد نمی‌تواند از حداکثر مجاز ({group['max_number']}) بیشتر باشد."
-            )
-            return
+        # بررسی max_number حذف شده است - هیچ محدودیتی برای شروع از هر عددی وجود ندارد
+        # حتی بررسی stop_number می‌تواند حذف شود اگر مطلقاً هیچ محدودیتی نمی‌خواهید
 
         if topic["khatm_type"] == "ghoran":
             logger.debug("Start_from not supported for Quran khatm: topic_id=%s", topic_id)
@@ -703,7 +739,6 @@ async def start_from(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         message = (
             f"✅ ختم {khatm_type_display} از عدد {number} شروع شد.\n"
-            f"تعداد قبلی: {topic['current_total']}\n"
             f"تعداد جدید: {number}"
         )
         logger.debug("Prepared confirmation message for start_from")

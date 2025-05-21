@@ -2,7 +2,7 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 from bot.database.db import fetch_one, fetch_all, execute, write_queue
-from bot.utils.constants import KHATM_TYPES
+from bot.utils.constants import KHATM_TYPES, DEFAULT_MAX_NUMBER
 from bot.utils.helpers import parse_number
 import re
 from telegram import constants
@@ -49,7 +49,7 @@ TEXT_COMMANDS = {
     "amar list": {"handler": "show_ranking", "admin_only": False, "aliases": ["لیست آمار"], "takes_args": False},
     "stop on": {"handler": "stop_on", "admin_only": True, "aliases": ["توقف روشن"], "takes_args": True},
     "stop on off": {"handler": "stop_on_off", "admin_only": True, "aliases": ["توقف خاموش"], "takes_args": False},
-    "number": {"handler": "set_number", "admin_only": True, "aliases": ["تعداد"], "takes_args": True},
+    "number": {"handler": "set_khatm_target_number", "admin_only": True, "aliases": ["تعداد"], "takes_args": True},
     "number off": {"handler": "number_off", "admin_only": True, "aliases": ["تعداد خاموش"], "takes_args": False},
     "reset number on": {"handler": "reset_number_on", "admin_only": True, "aliases": ["ریست تعداد روشن"], "takes_args": False},
     "reset number off": {"handler": "reset_number_off", "admin_only": True, "aliases": ["ریست تعداد خاموش"], "takes_args": False},
@@ -64,7 +64,10 @@ TEXT_COMMANDS = {
     "tag": {"handler": "tag_command", "admin_only": True, "aliases": ["تگ"], "takes_args": False},
     "cancel_tag": {"handler": "cancel_tag", "admin_only": True, "aliases": ["لغو تگ"], "takes_args": False},
     "subtract": {"handler": "subtract_khatm", "admin_only": True, "aliases": ["کاهش"], "takes_args": True},
-    "start from": {"handler": "start_from", "admin_only": True, "aliases": ["شروع از"], "takes_args": True}
+    "start from": {"handler": "start_from", "admin_only": True, "aliases": ["شروع از"], "takes_args": True},
+    "delete on": {"handler": "delete_after", "admin_only": True, "aliases": ["حذف روشن"], "takes_args": True},
+    "delete off": {"handler": "delete_off", "admin_only": True, "aliases": ["حذف خاموش"], "takes_args": False},
+    "status": {"handler": "khatm_status", "admin_only": False, "aliases": ["وضعیت"], "takes_args": False}
 }
 
 @log_function_call
@@ -226,8 +229,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not group:
             logger.info("Creating new group: group_id=%s", group_id)
             await execute(
-                "INSERT INTO groups (group_id, is_active, max_display_verses) VALUES (?, 1, 10)",
-                (group_id,)
+                "INSERT INTO groups (group_id, is_active, max_display_verses, max_number) VALUES (?, 1, 10, ?)",
+                (group_id, DEFAULT_MAX_NUMBER)
             )
         else:
             logger.info("Activating existing group: group_id=%s", group_id)
@@ -304,7 +307,6 @@ async def topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 "لطفاً نام تاپیک را وارد کنید.\n"
                 "مثال: topic ختم صلوات\n"
-                "یا: topic ختم قرآن"
             )
             return
             
@@ -317,7 +319,6 @@ async def topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.warning("Topics not enabled for group: group_id=%s", group_id)
             await update.message.reply_text(
                 "❌ این گروه از تاپیک‌ها پشتیبانی نمی‌کند.\n"
-                "لطفاً تاپیک‌ها را در تنظیمات گروه فعال کنید."
             )
             return
 
@@ -344,7 +345,12 @@ async def topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
                        group_id, topic_id, topic_name)
             message = f"✅ نام تاپیک به '{topic_name}' تغییر کرد."
             if existing_topic["khatm_type"]:
-                message += f"\nنوع ختم فعلی: {existing_topic['khatm_type']}"
+                khatm_type_fa = {
+                    "salavat": "صلوات",
+                    "zekr": "ذکر",
+                    "ghoran": "قرآن"
+                }.get(existing_topic["khatm_type"], existing_topic["khatm_type"])
+                message += f"\nنوع ختم فعلی: {khatm_type_fa}"
         else:
             await execute(
                 "INSERT INTO topics (topic_id, group_id, name, khatm_type) VALUES (?, ?, ?, ?)",
@@ -477,12 +483,14 @@ async def khatm_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif khatm_type == "salavat":
             logger.debug("Setting up salavat khatm: group_id=%s, topic_id=%s", group_id, topic_id)
-            context.user_data["awaiting_salavat"] = {
-                "topic_id": topic_id,
-                "group_id": group_id,
-                "timestamp": time.time()
-            }
-            message += "\n\n🙏 لطفاً تعداد صلوات را وارد کنید 14000."
+            default_stop_number = 100_000_000_000
+            await execute(
+                "UPDATE topics SET stop_number = ?, khatm_type = ?, is_active = 1 WHERE topic_id = ? AND group_id = ?",
+                (default_stop_number, khatm_type, topic_id, group_id)
+            )
+            logger.info("Updated topic to salavat with default stop_number: group_id=%s, topic_id=%s, stop_number=%d",
+                       group_id, topic_id, default_stop_number)
+            message = "🙏 ختم صلوات فعال شد."
 
         await query.message.edit_text(message)
         logger.info("Successfully completed khatm selection: group_id=%s, topic_id=%s, type=%s",
@@ -540,16 +548,16 @@ async def start_khatm_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info("Deactivated old khatm: group_id=%s, topic_id=%s, old_type=%s", 
                    group_id, topic_id, old_khatm_type)
 
-        # Queue the new khatm
-        request = {
-            "type": "start_khatm_zekr",
-            "group_id": group_id,
-            "topic_id": topic_id,
-            "topic_name": "اصلی",
-            "khatm_type": "zekr"
-        }
-        await write_queue.put(request)
-        logger.info("Queued start_khatm_zekr request: group_id=%s, topic_id=%s", group_id, topic_id)
+        # Directly insert/replace the new khatm
+        await execute(
+            """
+            INSERT OR REPLACE INTO topics
+            (topic_id, group_id, name, khatm_type, is_active, current_total)
+            VALUES (?, ?, ?, ?, 1, 0)
+            """,
+            (topic_id, group_id, "اصلی", "zekr")
+        )
+        logger.info("Directly started/replaced zekr khatm: group_id=%s, topic_id=%s", group_id, topic_id)
 
         # Set awaiting state
         context.user_data["awaiting_zekr"] = {
@@ -560,9 +568,14 @@ async def start_khatm_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info("Set awaiting_zekr state: group_id=%s, topic_id=%s, timestamp=%s", 
                    group_id, topic_id, context.user_data["awaiting_zekr"]["timestamp"])
         
-        message = "📿 ختم ذکر فعال شد.\nلطفاً متن ذکر را وارد کنید.\nمثال: سبحان‌الله"
+        message = (
+            "**📿 ختم ذکر فعال شد** 🌱\n"
+            "➖➖➖➖➖➖➖➖➖➖➖\n"
+            "**لطفاً متن ذکر را وارد کنید\.**\n"
+            "**مثال:** سبحان‌الله"
+        )
 
-        await update.message.reply_text(message)
+        await update.message.reply_text(message, parse_mode=constants.ParseMode.MARKDOWN_V2)
         logger.info("Sent zekr text prompt message")
         return 1
 
@@ -819,27 +832,26 @@ async def start_khatm_salavat(update: Update, context: ContextTypes.DEFAULT_TYPE
         logger.info("Deactivated previous khatm: group_id=%s, topic_id=%s, old_type=%s",
                    group_id, topic_id, old_khatm_type)
         
-        request = {
-            "type": "start_khatm_salavat",
-            "group_id": group_id,
-            "topic_id": topic_id,
-            "topic_name": "اصلی",
-            "khatm_type": "salavat"
-        }
-        await write_queue.put(request)
-        logger.debug("Queued start_khatm_salavat request: %s", request)
+        default_stop_number = 100_000_000_000
         
-        message = (
-            "🙏 ختم صلوات فعال شد.\n"
-            "لطفاً تعداد صلوات مورد نظر را وارد نمایید.\n"
-            "مثال: 14000"
+        # Directly insert/replace the new salavat khatm
+        await execute(
+            """
+            INSERT OR REPLACE INTO topics
+            (topic_id, group_id, name, khatm_type, is_active, current_total, stop_number)
+            VALUES (?, ?, ?, ?, 1, 0, ?)
+            """,
+            (topic_id, group_id, "اصلی", "salavat", default_stop_number)
         )
+        logger.info("Directly started/replaced salavat khatm: group_id=%s, topic_id=%s, stop_number=%d", 
+                   group_id, topic_id, default_stop_number)
+        
+        message = "🙏 ختم صلوات فعال شد."
 
         await update.message.reply_text(message)
-        context.user_data["awaiting_salavat"] = {"topic_id": topic_id, "group_id": group_id}
-        logger.info("Set awaiting_salavat state: group_id=%s, topic_id=%s",
-                   group_id, topic_id)
-        return 2
+        logger.info("Salavat khatm started with default target: group_id=%s, topic_id=%s, stop_number=%d",
+                   group_id, topic_id, default_stop_number)
+        return ConversationHandler.END
     except Exception as e:
         logger.error("Error in start_khatm_salavat: %s", e, exc_info=True)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
@@ -940,49 +952,80 @@ async def start_khatm_ghoran(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
 @log_function_call
-async def set_salavat_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def set_khatm_target_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        logger.info("Processing set_salavat_count: user_id=%s, chat_id=%s",
+        logger.info("Processing set_khatm_target_number: user_id=%s, chat_id=%s",
                    update.effective_user.id, update.effective_chat.id)
 
-        if "awaiting_salavat" not in context.user_data:
-            logger.warning("No awaiting_salavat state found: user_id=%s",
-                         update.effective_user.id)
-            await update.message.reply_text("هیچ ختم صلواتی در انتظار تنظیم نیست.")
-            return
-
         if not await is_admin(update, context):
-            logger.warning("Non-admin user attempted set_salavat_count: user_id=%s",
+            logger.warning("Non-admin user attempted set_khatm_target_number: user_id=%s",
                          update.effective_user.id)
             return
 
-        salavat_data = context.user_data.pop("awaiting_salavat")
-        logger.debug("Retrieved salavat data: topic_id=%s, group_id=%s",
-                    salavat_data["topic_id"], salavat_data["group_id"])
+        group_id = update.effective_chat.id
+        topic_id = update.message.message_thread_id or group_id
+        
+        if not context.args:
+            logger.warning("No number provided for set_khatm_target_number: group_id=%s", group_id)
+            await update.message.reply_text(
+                "📝 لطفاً یک عدد معتبر برای تعداد هدف وارد کنید.\\n"
+                "مثال: number 14000"
+            )
+            return
 
-        count = parse_number(update.message.text)
-        logger.debug("Parsed salavat count: input=%s, result=%s",
-                    update.message.text, count)
+        count = parse_number(context.args[0])
+        logger.debug("Parsed target number: input=%s, result=%s",
+                    context.args[0], count)
 
         if count is None or count <= 0:
-            logger.warning("Invalid salavat count: %s", count)
+            logger.warning("Invalid target number: %s", count)
             await update.message.reply_text("لطفاً یک عدد معتبر و مثبت وارد کنید (مثال: 14000).")
-            return 2
+            return
+
+        topic = await fetch_one(
+            "SELECT khatm_type, is_active FROM topics WHERE topic_id = ? AND group_id = ?",
+            (topic_id, group_id)
+        )
+
+        if not topic or not topic["is_active"]:
+            logger.warning("No active topic found or topic inactive: group_id=%s, topic_id=%s", group_id, topic_id)
+            await update.message.reply_text("هیچ ختم فعالی برای تنظیم تعداد وجود ندارد. ابتدا یک ختم را شروع کنید.")
+            return
+
+        if topic["khatm_type"] not in ["salavat", "zekr"]:
+            logger.warning("Cannot set target number for khatm type %s: group_id=%s, topic_id=%s",
+                         topic["khatm_type"], group_id, topic_id)
+            await update.message.reply_text(f"نمی‌توان تعداد هدف را برای ختم از نوع '{topic['khatm_type']}' تنظیم کرد. این دستور فقط برای صلوات و ذکر است.")
+            return
+            
+        # Check current_total against new stop_number
+        current_khatm_info = await fetch_one(
+            "SELECT current_total FROM topics WHERE topic_id = ? AND group_id = ?",
+            (topic_id, group_id)
+        )
+        if current_khatm_info and current_khatm_info["current_total"] > count:
+            logger.warning(
+                "New target number %d is less than current total %d for topic_id=%s",
+                count, current_khatm_info["current_total"], topic_id
+            )
+            await update.message.reply_text(
+                f"❌ تعداد هدف جدید ({count}) نمی‌تواند کمتر از تعداد فعلی ختم ({current_khatm_info['current_total']}) باشد."
+            )
+            return
 
         await execute(
             "UPDATE topics SET stop_number = ? WHERE topic_id = ? AND group_id = ?",
-            (count, salavat_data["topic_id"], salavat_data["group_id"])
+            (count, topic_id, group_id)
         )
-        logger.info("Set salavat count: group_id=%s, topic_id=%s, count=%d",
-                   salavat_data["group_id"], salavat_data["topic_id"], count)
+        logger.info("Set khatm target number: group_id=%s, topic_id=%s, khatm_type=%s, count=%d",
+                   group_id, topic_id, topic["khatm_type"], count)
 
-        await update.message.reply_text(f"✅ ختم {count} صلوات تنظیم شد. ختم صلوات آغاز شد!")
-        return ConversationHandler.END
+        khatm_type_fa = "صلوات" if topic["khatm_type"] == "salavat" else "ذکر"
+        await update.message.reply_text(f"✅ تعداد هدف برای ختم {khatm_type_fa} به {count} تغییر یافت.")
 
     except Exception as e:
-        logger.error("Error in set_salavat_count: %s", e, exc_info=True)
-        await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
-        return 2
+        logger.error("Error in set_khatm_target_number: %s", e, exc_info=True)
+        await update.message.reply_text("خطایی در تنظیم تعداد هدف رخ داد. لطفاً دوباره تلاش کنید.")
 
 @log_function_call
 async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
