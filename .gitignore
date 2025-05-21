@@ -6,3 +6,7 @@ venv
 test.py
 *.db-wal
 *.db-shm
+bot/handlers/__pycache__/
+bot/database/__pycache__/
+bot/utils/__pycache__/
+tests/
