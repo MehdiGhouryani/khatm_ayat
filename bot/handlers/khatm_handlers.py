@@ -1,16 +1,21 @@
-import logging
 import asyncio
-from telegram import Update,constants
-from telegram.ext import ContextTypes
-from telegram.error import TimedOut, BadRequest
-from bot.database.db import fetch_one, fetch_all, write_queue
-from bot.utils.helpers import parse_number, format_khatm_message, get_random_sepas
-from bot.handlers.admin_handlers import is_admin, TEXT_COMMANDS
+import datetime
+import json
+import time
+import logging
+import re
+from datetime import timedelta, timezone
+from pytz import timezone
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, constants
+from telegram.ext import ContextTypes, CallbackQueryHandler
+from telegram.error import TimedOut, Forbidden, BadRequest
+from bot.database.db import fetch_one, fetch_all, execute, write_queue
+from bot.utils.helpers import parse_number, format_khatm_message, get_random_sepas, reply_text_and_schedule_deletion, send_message_and_schedule_deletion
 from bot.utils.quran import QuranManager
+from bot.handlers.admin_handlers import is_admin, TEXT_COMMANDS
 
 logger = logging.getLogger(__name__)
 
-# Add debug log for tracking function entry/exit
 def log_function_call(func):
     async def wrapper(*args, **kwargs):
         logger.debug(f"Entering function: {func.__name__}")
@@ -37,6 +42,7 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
         group_id = update.effective_chat.id
         topic_id = update.message.message_thread_id or group_id
+        
         raw_text = update.message.text.strip()
         text = raw_text.lower()
 
@@ -44,316 +50,395 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                    group_id, topic_id, raw_text, update.effective_user.username or update.effective_user.first_name)
 
         # Step 1: Check if the message is a command (English or Persian)
-        command_found = False
+        # and if the user is an admin. If so, execute and return.
+        is_admin_user = await is_admin(update, context) # Check admin status once
+
+        command_found_and_executed = False
         for command, info in TEXT_COMMANDS.items():
-            # Check exact match for commands that don't take arguments
+            is_command_match = False
+            args = []
+
             if info.get("takes_args", False):
-                # Commands that accept arguments (e.g., /topic, /start_from)
                 if (text == command or 
                     raw_text in info["aliases"] or 
                     text.startswith(command + " ") or 
                     any(raw_text.startswith(alias + " ") for alias in info["aliases"])):
-                    
-                    logger.info("Command found (with args): command=%s, text=%s, aliases=%s, user=%s", 
-                              command, text, info["aliases"], update.effective_user.username or update.effective_user.first_name)
-                    
-                    if info["admin_only"] and not await is_admin(update, context):
-                        logger.warning("Non-admin user attempted admin command: user_id=%s, command=%s, username=%s", 
-                                     update.effective_user.id, command, update.effective_user.username or update.effective_user.first_name)
-                        return
-                    
-                    # Extract arguments properly
+                    is_command_match = True
                     if text.startswith(command + " "):
                         args = text[len(command)+1:].split()
                     elif any(raw_text.startswith(alias + " ") for alias in info["aliases"]):
                         matching_alias = next(alias for alias in info["aliases"] if raw_text.startswith(alias + " "))
                         args = raw_text[len(matching_alias)+1:].split()
-                    else:
-                        args = []
-                    
-                    context.args = args
-                    logger.info("Executing command handler: command=%s, args=%s, user=%s", 
-                              command, args, update.effective_user.username or update.effective_user.first_name)
-                    await info["handler"](update, context)
-                    command_found = True
-                    return
-            else:
-                # Commands that must be exact (e.g., /start, شروع)
+            else: # Commands that must be exact
                 if text == command or raw_text in info["aliases"]:
-                    logger.info("Exact command found: command=%s, text=%s, aliases=%s, user=%s", 
-                              command, text, info["aliases"], update.effective_user.username or update.effective_user.first_name)
-                    
-                    if info["admin_only"] and not await is_admin(update, context):
-                        logger.warning("Non-admin user attempted admin command: user_id=%s, command=%s, username=%s", 
-                                     update.effective_user.id, command, update.effective_user.username or update.effective_user.first_name)
-                        return
-                    
-                    context.args = []
-                    logger.info("Executing command handler: command=%s, args=%s, user=%s", 
-                              command, [], update.effective_user.username or update.effective_user.first_name)
-                    await info["handler"](update, context)
-                    command_found = True
-                    return
+                    is_command_match = True
+            
+            if is_command_match:
+                logger.info("Command matched: command=%s, text='%s', user=%s, is_admin=%s", 
+                            command, raw_text, update.effective_user.id, is_admin_user)
+                if info["admin_only"] and not is_admin_user:
+                    logger.warning("Non-admin user %s attempted admin command '%s'. Ignoring.", 
+                                   update.effective_user.id, command)
 
-        # If no command found, continue with normal message processing
-        if not command_found:
-            logger.debug("No command found, processing as normal message: text=%s", raw_text)
-            # Rest of the function remains unchanged...
-            # Step 2: Check group and topic status
-            group = await fetch_one(
-                """
-                SELECT is_active, lock_enabled, min_number, max_number, max_display_verses 
-                FROM groups WHERE group_id = ?
-                """,
+
+                    # If it's an admin-only command AND the user is NOT an admin, reply and return.
+                    if info["admin_only"]: # and not is_admin_user is implied by outer check
+
+                         return 
+
+                context.args = args
+                logger.info("Executing command handler: command=%s, args=%s, user=%s", 
+                            command, args, update.effective_user.id)
+                try:
+                    await info["handler"](update, context)
+                    command_found_and_executed = True 
+                except Exception as e_handler:
+                    logger.error(f"Error executing handler for command {command}: {e_handler}", exc_info=True)
+                    # Optionally send an error message to the user
+                    try:
+                        await update.message.reply_text("خطایی در اجرای دستور رخ داد.")
+                    except:
+                        pass 
+                return 
+
+        if not is_admin_user: 
+            group_settings = await fetch_one(
+                "SELECT time_off_start, time_off_end FROM groups WHERE group_id = ?", 
                 (group_id,)
             )
-            if not group:
-                logger.warning("Group not found: group_id=%s, user=%s", 
-                              group_id, update.effective_user.username or update.effective_user.first_name)
-                await update.message.reply_text(
-                    "گروه ثبت نشده.\n"
-                    "از start یا 'شروع' استفاده کنید."
-                )
-                return
 
-            if not group["is_active"]:
-                logger.warning("Group not active: group_id=%s, user=%s", 
-                              group_id, update.effective_user.username or update.effective_user.first_name)
-                await update.message.reply_text(
-                    "گروه فعال نیست.\n"
-                    "از start یا 'شروع' استفاده کنید."
-                )
-                return
+            if group_settings and group_settings["time_off_start"] and group_settings["time_off_end"]:
+                try:
+                    tz = timezone('Asia/Tehran')
+                    now_dt_tehran = datetime.datetime.now(tz) 
+                    
+                    start_time_str = group_settings["time_off_start"] 
+                    end_time_str = group_settings["time_off_end"]     
 
-            topic = await fetch_one(
-                """
-                SELECT khatm_type, current_total, zekr_text, min_ayat, max_ayat, period_number, 
-                       stop_number, completion_message, current_verse_id, is_active, completion_count 
-                FROM topics WHERE topic_id = ? AND group_id = ?
-                """,
-                (topic_id, group_id)
-            )
-            if not topic:
-                logger.warning("Topic not found: group_id=%s, topic_id=%s, user=%s", 
-                              group_id, topic_id, update.effective_user.username or update.effective_user.first_name)
-                return
+                    start_hour, start_minute = map(int, start_time_str.split(':'))
+                    end_hour, end_minute = map(int, end_time_str.split(':'))
 
-            if not topic["is_active"]:
-                logger.warning("Topic not active: group_id=%s, topic_id=%s, user=%s", 
-                              group_id, topic_id, update.effective_user.username or update.effective_user.first_name)
+                    time_off_start_naive = datetime.time(start_hour, start_minute)
+                    time_off_end_naive = datetime.time(end_hour, end_minute)
+                    
+                    logger.debug(
+                        f"Checking time_off for non-admin in group {group_id}: \\n"
+                        f"  Current datetime (Tehran): {now_dt_tehran}\\n"
+                        f"  DB start_time_str: {start_time_str}, DB end_time_str: {end_time_str}\\n"
+                        f"  Parsed naive start_time: {time_off_start_naive}, Parsed naive end_time: {time_off_end_naive}"
+                    )
 
-                return
-
-            user_id = update.effective_user.id
-            username = update.effective_user.username or update.effective_user.first_name
-            first_name = update.effective_user.first_name
-
-            logger.info("Processing message for active topic: group_id=%s, topic_id=%s, khatm_type=%s, user=%s, current_total=%d", 
-                       group_id, topic_id, topic["khatm_type"], username, topic["current_total"])
-
-            # Step 3: Handle awaiting states for zekr or salavat
-            if context.user_data.get("awaiting_zekr"):
-                logger.info("Found awaiting_zekr state: user=%s", username)
-                
-                if await is_admin(update, context):
-                    logger.info("Processing awaiting_zekr state for user=%s", username)
-                    from bot.handlers.admin_handlers import set_zekr_text
-                    await set_zekr_text(update, context)
-                    return
-                else:
-                    logger.warning("Non-admin user attempted to set zekr: user=%s", username)
-                    # Clear the flag if a non-admin attempts to use it, to prevent it from blocking normal number inputs
-                    context.user_data.pop("awaiting_zekr", None)
-            
-            # Step 4: Process number input for contributions
-            number = parse_number(raw_text)
-            if number is None:
-                logger.debug("Message is not a number: text=%s, user=%s", raw_text, username)
-                if topic["khatm_type"] == "ghoran":
-                    logger.info("Informed user about numeric input for Quran khatm: group_id=%s, user=%s", group_id, username)
-                    return
-                return
-
-            logger.info("Parsed number from message: number=%d, user=%s", number, username)
-
-            # Step 5: Validate number range
-            is_admin_user = await is_admin(update, context)
-            
-            # Allow negative numbers for admins
-            if number < 0 and is_admin_user:
-                # Admin can use negative numbers, proceed with the contribution
-                pass
-            # For non-admins or positive numbers, apply normal validations
-            elif topic["khatm_type"] not in ["salavat", "zekr"]:
-                if number < group["min_number"] or number > group["max_number"]:
-                    logger.warning("Number out of range (non-salavat/non-zekr): number=%d, min=%d, max=%d, user=%s",
-                                 number, group["min_number"], group["max_number"], username)
-                    await update.message.reply_text(f"عدد باید بین {group['min_number']} و {group['max_number']} باشد.")
-                    return
-            elif number < group["min_number"]: # For salavat and zekr, only check min_number if it's greater than 0
-                if group["min_number"] > 0: # Only enforce min_number if it's set to a positive value
-                    logger.warning("Number less than min_number (salavat/zekr): number=%d, min=%d, user=%s",
-                                    number, group["min_number"], username)
-                    await update.message.reply_text(f"عدد باید حداقل {group['min_number']} باشد.")
-                    return
-            # Check max_number for salavat and zekr only if it's set and user is not admin
-            elif topic["khatm_type"] in ["salavat", "zekr"] and not is_admin_user:
-                if number > group["max_number"] and group["max_number"] > 0:
-                    logger.warning("Number exceeds max_number (salavat/zekr): number=%d, max=%d, user=%s",
-                                 number, group["max_number"], username)
-                    await update.message.reply_text(f"عدد نمی‌تواند بیشتر از {group['max_number']} باشد.")
-                    return
-
-            # Step 5.5: Ensure user exists in users table
-            user_exists = await fetch_one(
-                "SELECT 1 FROM users WHERE user_id = ? AND group_id = ? AND topic_id = ?",
-                (user_id, group_id, topic_id)
-            )
-            logger.debug("Checking user existence: user_id=%s, group_id=%s, topic_id=%s, exists=%s",
-                        user_id, group_id, topic_id, bool(user_exists))
-            
-            if not user_exists:
-                logger.info("Creating new user record: user_id=%s, username=%s, group_id=%s, topic_id=%s",
-                          user_id, username, group_id, topic_id)
-                await fetch_one(
-                    "INSERT INTO users (user_id, group_id, topic_id, username, first_name, total_salavat, total_zekr, total_ayat) VALUES (?, ?, ?, ?, ?, 0, 0, 0)",
-                    (user_id, group_id, topic_id, username, first_name)
-                )
-
-            # Step 6: Process contribution
-            request = {
-                "type": "contribution",
-                "group_id": group_id,
-                "topic_id": topic_id,
-                "user_id": user_id,
-                "amount": number,
-                "khatm_type": topic["khatm_type"],
-            }
-            logger.debug("Initial contribution request: %s", request)
-
-            current_topic_total_before_contribution = topic["current_total"] # Store for display
-
-            if topic["khatm_type"] == "ghoran":
-                logger.debug("Processing Quran contribution details: current_db_verse_id=%s", topic["current_verse_id"])
-                if not topic["current_verse_id"]:
-                    logger.error("No current_verse_id for Quran khatm: group_id=%s, topic_id=%s", group_id, topic_id)
-                    await update.message.reply_text("❌ اطلاعات آیات موجود نیست. لطفاً ابتدا محدوده ختم قرآن را تنظیم کنید.")
-                    return
-
-                range_result = await fetch_one(
-                    "SELECT start_verse_id, end_verse_id FROM khatm_ranges WHERE group_id = ? AND topic_id = ?",
-                    (group_id, topic_id)
-                )
-                if not range_result:
-                    logger.error("No verse range for Quran khatm: group_id=%s, topic_id=%s", group_id, topic_id)
-                    await update.message.reply_text("❌ محدوده آیات تنظیم نشده. از `set_range` استفاده کنید.", parse_mode=constants.ParseMode.MARKDOWN)
-                    return
-
-                current_db_verse_id = topic["current_verse_id"] # Verse ID before this contribution
-                
-                # Number of verses to actually display and advance the main khatm by
-                if number < 0:
-                    # For negative numbers, use the actual number for display and advancement
-                    displayed_amount = number
-                else:
-                    displayed_amount = min(number, group["max_display_verses"])
-                request["displayed_amount"] = displayed_amount # For db handler
-
-                # Potential new verse_id after this contribution (based on displayed amount for topic progress)
-                new_topic_verse_id = current_db_verse_id + displayed_amount
-                
-                # Don't allow verse_id to go below start_verse_id
-                if new_topic_verse_id < range_result["start_verse_id"]:
-                    new_topic_verse_id = range_result["start_verse_id"]
-
-                is_quran_khatm_completed = (new_topic_verse_id >= range_result["end_verse_id"])
-                request["completed"] = is_quran_khatm_completed
-                
-                # The verse_id to store in topics table for the *next* contribution (topic progress)
-                topic_verse_id_for_db_update = min(new_topic_verse_id, range_result["end_verse_id"])
-                
-                request.update({
-                    "verse_id": topic_verse_id_for_db_update, # ID of the last verse effectively read for topic progress
-                    "current_verse_id": topic_verse_id_for_db_update, # This is what will be stored in topics.current_verse_id
-                    "start_verse_id": range_result["start_verse_id"], # For reference in queue processor if needed
-                    "end_verse_id": range_result["end_verse_id"]   # For reference
-                })
-                logger.info("Quran khatm request update: to_store_topic_current_verse_id=%d, completed=%s, displayed_amount=%d, user_amount=%d",
-                            topic_verse_id_for_db_update, is_quran_khatm_completed, displayed_amount, number)
-            else: # For salavat and zekr
-                if number < 0:
-                    # For negative contributions, we don't check completion
-                    request["completed"] = False
-                else:
-                    request["completed"] = topic["stop_number"] > 0 and (current_topic_total_before_contribution + number >= topic["stop_number"])
-                request["displayed_amount"] = number # For non-Quran, displayed_amount is same as amount
-
-            await write_queue.put(request)
-            logger.info("Queued contribution: %s", request)
-
-            # Prepare data for the confirmation message
-            sepas_text = await get_random_sepas(group_id)
-            
-            verses_for_display = []
-            if topic["khatm_type"] == "ghoran":
-                quran = await QuranManager.get_instance()
-                # For display, we show verses starting from current_db_verse_id (before this contribution)
-                # The number of verses to show is min(user_input_number, max_display_verses_setting)
-                current_verse_id_for_display_fetch = current_db_verse_id # This is topic["current_verse_id"] before update
-                
-                if number < 0:
-                    # For negative numbers, we don't display any verses
-                    num_verses_to_fetch_for_display = 0
-                else:
-                    num_verses_to_fetch_for_display = min(displayed_amount, group["max_display_verses"])
-
-                logger.debug(f"Verse display pre-fetch: topic_id={topic_id}, group_id={group_id}, current_verse_id_for_display_fetch={current_verse_id_for_display_fetch}, num_verses_to_fetch_for_display={num_verses_to_fetch_for_display}, user_input_number={displayed_amount}, group_max_display={group['max_display_verses']}")
-
-                for i in range(num_verses_to_fetch_for_display):
-                    verse = quran.get_verse_by_id(current_verse_id_for_display_fetch + i)
-                    if verse:
-                        verses_for_display.append(verse)
+                    is_currently_off = False
+                    if time_off_start_naive <= time_off_end_naive: 
+                        if time_off_start_naive <= now_dt_tehran.time() < time_off_end_naive:
+                            is_currently_off = True
                     else:
-                        logger.warning("Verse not found for display: id %d. Stopping verse fetch.", current_verse_id_for_display_fetch + i)
-                        break
-                logger.debug("Retrieved %d verses for display list", len(verses_for_display))
-            
-            # topic["current_total"] is the value BEFORE this contribution.
-            # topic["completion_count"] is also the value BEFORE this contribution.
-            
-            # For Quran, new_total for display purposes should reflect topic advancement (by displayed_amount)
-            # For Salavat/Zekr, new_total is based on the full number.
-            new_total_for_display = current_topic_total_before_contribution
-            if topic["khatm_type"] == "ghoran":
-                new_total_for_display += displayed_amount
-            else:
-                new_total_for_display += number
+                        if now_dt_tehran.time() >= time_off_start_naive or now_dt_tehran.time() < time_off_end_naive:
+                            is_currently_off = True
+                            logger.debug(f"  Time_off spans midnight and current time {now_dt_tehran.time()} is within {time_off_start_naive} or before {time_off_end_naive}.")
+                        else:
+                            logger.debug(f"  Time_off spans midnight but current time {now_dt_tehran.time()} is NOT within {time_off_start_naive} or before {time_off_end_naive}.")
 
-            message = format_khatm_message(
-                khatm_type=topic["khatm_type"],
-                previous_total=current_topic_total_before_contribution,
-                amount=number, # User's actual input number (e.g., 60)
-                new_total=new_total_for_display, # New total reflecting topic progress
-                sepas_text=sepas_text,
-                group_id=group_id,
-                zekr_text=topic["zekr_text"],
-                verses=verses_for_display,
-                max_display_verses=group["max_display_verses"], # Pass the setting to formatter
-                completion_count=topic["completion_count"] # Pass current completion_count
+                    if is_currently_off:
+                        logger.info(f"Group {group_id} is currently in time_off period ({start_time_str}-{end_time_str}). Ignoring non-admin message from user {update.effective_user.id}.")
+                        return 
+                except ValueError as ve:
+                    logger.error(f"Error parsing time_off times for group {group_id}: {ve}. Start: {group_settings['time_off_start']}, End: {group_settings['time_off_end']}")
+                except Exception as e:
+                     logger.error(f"Unexpected error during time_off check for group {group_id}: {e}", exc_info=True)
+
+        group = await fetch_one(
+            """
+            SELECT is_active, lock_enabled, min_number, max_number, max_display_verses, min_display_verses 
+            FROM groups WHERE group_id = ?
+            """,
+            (group_id,)
+        )
+        if not group:
+            logger.warning("Group not found: group_id=%s, user=%s", 
+                          group_id, update.effective_user.username or update.effective_user.first_name)
+            await update.message.reply_text(
+                "گروه ثبت نشده.\n"
+                "از start یا 'شروع' استفاده کنید."
             )
-            logger.debug("Formatted khatm message for user")
+            return
 
-            try:
-                await update.message.reply_text(message, parse_mode="Markdown")
-                logger.info("Sent contribution confirmation message: group_id=%s, topic_id=%s, user=%s", 
-                          group_id, topic_id, username)
-            except TimedOut:
-                logger.warning("Timed out sending message for group_id=%s, topic_id=%s, user=%s, retrying once",
-                             group_id, topic_id, username)
-                await asyncio.sleep(2)
-                await update.message.reply_text(message, parse_mode="Markdown")
-                logger.info("Sent contribution confirmation message after retry: group_id=%s, topic_id=%s, user=%s", 
-                          group_id, topic_id, username)
+        if not group["is_active"]:
+            logger.warning("Group not active: group_id=%s, user=%s", 
+                          group_id, update.effective_user.username or update.effective_user.first_name)
+            await update.message.reply_text(
+                "گروه فعال نیست.\n"
+                "از start یا 'شروع' استفاده کنید."
+            )
+            return
+
+        topic = await fetch_one(
+            """
+            SELECT khatm_type, current_total, zekr_text, min_ayat, max_ayat, period_number, 
+                   stop_number, completion_message, current_verse_id, is_active, completion_count 
+            FROM topics WHERE topic_id = ? AND group_id = ?
+            """,
+            (topic_id, group_id)
+        )
+        if not topic:
+            logger.warning("Topic not found: group_id=%s, topic_id=%s, user=%s", 
+                          group_id, topic_id, update.effective_user.username or update.effective_user.first_name)
+            return
+
+        if not topic["is_active"]:
+            logger.warning("Topic not active: group_id=%s, topic_id=%s, user=%s", 
+                          group_id, topic_id, update.effective_user.username or update.effective_user.first_name)
+
+            return
+
+        user_id = update.effective_user.id
+        username = update.effective_user.username or update.effective_user.first_name
+        first_name = update.effective_user.first_name
+
+        logger.info("Processing message for active topic: group_id=%s, topic_id=%s, khatm_type=%s, user=%s, current_total=%d", 
+                   group_id, topic_id, topic["khatm_type"], username, topic["current_total"])
+
+        # Step 3: Handle awaiting states for zekr or salavat
+        if context.user_data.get("awaiting_zekr"):
+            logger.info("Found awaiting_zekr state: user=%s", username)
+            
+            if await is_admin(update, context):
+                logger.info("Processing awaiting_zekr state for user=%s", username)
+                from bot.handlers.admin_handlers import set_zekr_text
+                await set_zekr_text(update, context)
+                return
+            else:
+                logger.warning("Non-admin user attempted to set zekr: user=%s", username)
+                # Clear the flag if a non-admin attempts to use it, to prevent it from blocking normal number inputs
+                context.user_data.pop("awaiting_zekr", None)
+        
+        # Step 4: Process number input for contributions
+        number = parse_number(raw_text)
+        if number is None:
+            logger.debug("Message is not a number: text=%s, user=%s", raw_text, username)
+            if topic["khatm_type"] == "ghoran":
+                logger.info("Informed user about numeric input for Quran khatm: group_id=%s, user=%s", group_id, username)
+                return
+            return
+
+        logger.info("Parsed number from message: number=%d, user=%s", number, username)
+
+        # Step 5: Validate number range
+        is_admin_user = await is_admin(update, context)
+        
+        # Allow negative numbers for admins
+        if number < 0 and is_admin_user:
+            # Admin can use negative numbers, proceed with the contribution
+            pass
+        # For non-admins or positive numbers, apply normal validations
+        elif topic["khatm_type"] == "ghoran":
+            min_verses = group.get("min_display_verses", 1)
+            max_verses = group.get("max_display_verses", 10)
+            if number < min_verses:
+                logger.warning("Number of verses below minimum (Quran): number=%d, min=%d, user=%s",
+                              number, min_verses, username)
+                await update.message.reply_text(f"تعداد آیات باید حداقل {min_verses} باشد.")
+                return
+        elif topic["khatm_type"] not in ["salavat", "zekr"]: # General case, shouldn't happen if khatm_type is ghoran, salavat or zekr
+            if number < group["min_number"] or number > group["max_number"]:
+                logger.warning("Number out of range (non-salavat/non-zekr): number=%d, min=%d, max=%d, user=%s",
+                             number, group["min_number"], group["max_number"], username)
+                await update.message.reply_text(f"عدد باید بین {group['min_number']} و {group['max_number']} باشد.")
+                return
+            
+        elif number < group["min_number"]: # For salavat and zekr, only check min_number if it's greater than 0
+            if group["min_number"] > 0: # Only enforce min_number if it's set to a positive value
+                logger.warning("Number less than min_number (salavat/zekr): number=%d, min=%d, user=%s",
+                                number, group["min_number"], username)
+                await update.message.reply_text(f"عدد باید حداقل {group['min_number']} باشد.")
+                return
+        # Check max_number for salavat and zekr only if it's set and user is not admin
+        elif topic["khatm_type"] in ["salavat", "zekr"] and not is_admin_user:
+            if number > group["max_number"] and group["max_number"] > 0:
+                logger.warning("Number exceeds max_number (salavat/zekr): number=%d, max=%d, user=%s",
+                             number, group["max_number"], username)
+                await update.message.reply_text(f"عدد نمی‌تواند بیشتر از {group['max_number']} باشد.")
+                return
+
+        # Step 5.5: Ensure user exists in users table
+        user_exists = await fetch_one(
+            "SELECT 1 FROM users WHERE user_id = ? AND group_id = ? AND topic_id = ?",
+            (user_id, group_id, topic_id)
+        )
+        logger.debug("Checking user existence: user_id=%s, group_id=%s, topic_id=%s, exists=%s",
+                    user_id, group_id, topic_id, bool(user_exists))
+        
+        if not user_exists:
+            logger.info("Creating new user record: user_id=%s, username=%s, group_id=%s, topic_id=%s",
+                      user_id, username, group_id, topic_id)
+            await fetch_one(
+                "INSERT INTO users (user_id, group_id, topic_id, username, first_name, total_salavat, total_zekr, total_ayat) VALUES (?, ?, ?, ?, ?, 0, 0, 0)",
+                (user_id, group_id, topic_id, username, first_name)
+            )
+
+        # Step 6: Process contribution
+        request = {
+            "type": "contribution",
+            "group_id": group_id,
+            "topic_id": topic_id,
+            "user_id": user_id,
+            "amount": number,
+            "khatm_type": topic["khatm_type"],
+        }
+        logger.debug("Initial contribution request: %s", request)
+
+        current_topic_total_before_contribution = topic["current_total"] # Store for display
+
+        if topic["khatm_type"] == "ghoran":
+            logger.debug("Processing Quran contribution details: current_db_verse_id=%s", topic["current_verse_id"])
+            if not topic["current_verse_id"]:
+                logger.error("No current_verse_id for Quran khatm: group_id=%s, topic_id=%s", group_id, topic_id)
+                await update.message.reply_text("❌ اطلاعات آیات موجود نیست. لطفاً ابتدا محدوده ختم قرآن را تنظیم کنید.")
+                return
+
+            range_result = await fetch_one(
+                "SELECT start_verse_id, end_verse_id FROM khatm_ranges WHERE group_id = ? AND topic_id = ?",
+                (group_id, topic_id)
+            )
+            if not range_result:
+                logger.error("No verse range for Quran khatm: group_id=%s, topic_id=%s", group_id, topic_id)
+                await update.message.reply_text("❌ محدوده آیات تنظیم نشده. از `set_range` استفاده کنید.", parse_mode=constants.ParseMode.MARKDOWN)
+                return
+
+            current_db_verse_id = topic["current_verse_id"] # Verse ID before this contribution
+            
+            # Number of verses to actually display and advance the main khatm by
+            if number < 0:
+                # For negative numbers, use the actual number for display and advancement
+                displayed_amount = number
+            else:
+                displayed_amount = min(number, group["max_display_verses"])
+            request["displayed_amount"] = displayed_amount # For db handler
+
+            # Potential new verse_id after this contribution (based on displayed amount for topic progress)
+            new_topic_verse_id = current_db_verse_id + displayed_amount
+            
+            # Don't allow verse_id to go below start_verse_id
+            if new_topic_verse_id < range_result["start_verse_id"]:
+                new_topic_verse_id = range_result["start_verse_id"]
+
+            is_quran_khatm_completed = (new_topic_verse_id >= range_result["end_verse_id"])
+            request["completed"] = is_quran_khatm_completed
+            
+            # The verse_id to store in topics table for the *next* contribution (topic progress)
+            topic_verse_id_for_db_update = min(new_topic_verse_id, range_result["end_verse_id"])
+            
+            request.update({
+                "verse_id": topic_verse_id_for_db_update, # ID of the last verse effectively read for topic progress
+                "current_verse_id": topic_verse_id_for_db_update, # This is what will be stored in topics.current_verse_id
+                "start_verse_id": range_result["start_verse_id"], # For reference in queue processor if needed
+                "end_verse_id": range_result["end_verse_id"]   # For reference
+            })
+            logger.info("Quran khatm request update: to_store_topic_current_verse_id=%d, completed=%s, displayed_amount=%d, user_amount=%d",
+                        topic_verse_id_for_db_update, is_quran_khatm_completed, displayed_amount, number)
+        else: 
+            if number < 0:
+                request["completed"] = False
+            else:
+                request["completed"] = topic["stop_number"] > 0 and (current_topic_total_before_contribution + number >= topic["stop_number"])
+        
+                if request["completed"]:
+                    topic_completed = await fetch_one(
+                        "SELECT is_completed FROM topics WHERE group_id = ? AND topic_id = ?",
+                        (group_id, topic_id)
+                    )
+                    if topic_completed and topic_completed["is_completed"] == 0:
+                        request["send_completion"] = True
+                        request["bot"] = context.bot
+                        request["chat_id"] = group_id
+                        request["thread_id"] = topic_id if topic_id != group_id else None
+                        request["current_total"] = current_topic_total_before_contribution + number
+                        request["khatm_type_display"] = "صلوات" if topic["khatm_type"] == "salavat" else "ذکر"
+            request["displayed_amount"] = number
+
+        await write_queue.put(request)
+        logger.info("Queued contribution: %s", request)
+        sepas_text = await get_random_sepas(group_id)
+        
+        verses_for_display = []
+        if topic["khatm_type"] == "ghoran":
+            quran = await QuranManager.get_instance()
+            # For display, we show verses starting from current_db_verse_id (before this contribution)
+            # The number of verses to show is min(user_input_number, max_display_verses_setting)
+            current_verse_id_for_display_fetch = current_db_verse_id # This is topic["current_verse_id"] before update
+            
+            if number < 0:
+                # For negative numbers, we don't display any verses
+                num_verses_to_fetch_for_display = 0
+            else:
+                num_verses_to_fetch_for_display = min(displayed_amount, group["max_display_verses"])
+
+            logger.debug(f"Verse display pre-fetch: topic_id={topic_id}, group_id={group_id}, current_verse_id_for_display_fetch={current_verse_id_for_display_fetch}, num_verses_to_fetch_for_display={num_verses_to_fetch_for_display}, user_input_number={displayed_amount}, group_max_display={group['max_display_verses']}")
+
+            for i in range(num_verses_to_fetch_for_display):
+                verse = quran.get_verse_by_id(current_verse_id_for_display_fetch + i)
+                if verse:
+                    verses_for_display.append(verse)
+                else:
+                    logger.warning("Verse not found for display: id %d. Stopping verse fetch.", current_verse_id_for_display_fetch + i)
+                    break
+            logger.debug("Retrieved %d verses for display list", len(verses_for_display))
+        
+
+        new_total_for_display = current_topic_total_before_contribution
+        if topic["khatm_type"] == "ghoran":
+            new_total_for_display += displayed_amount
+        else:
+            new_total_for_display += number
+
+        message = format_khatm_message(
+            khatm_type=topic["khatm_type"],
+            previous_total=current_topic_total_before_contribution,
+            amount=number, # User's actual input number (e.g., 60)
+            new_total=new_total_for_display, # New total reflecting topic progress
+            sepas_text=sepas_text,
+            group_id=group_id,
+            zekr_text=topic["zekr_text"],
+            verses=verses_for_display,
+            max_display_verses=group["max_display_verses"], # Pass the setting to formatter
+            completion_count=topic["completion_count"] # Pass current completion_count
+        )
+        logger.debug("Formatted khatm message for user")
+
+        try:
+            # حالا message می‌تواند یک رشته یا لیستی از رشته‌ها باشد
+            if isinstance(message, list):
+                for idx, msg_part in enumerate(message):
+                    await reply_text_and_schedule_deletion(update, context, msg_part, parse_mode="Markdown")
+                    if idx < len(message) - 1:
+                        # کمی مکث بین ارسال پیام‌ها
+                        await asyncio.sleep(0.5)
+            else:
+                # برای سازگاری با نسخه‌های قبلی
+                await reply_text_and_schedule_deletion(update, context, message, parse_mode="Markdown")
+            logger.info("Sent contribution confirmation message: group_id=%s, topic_id=%s, user=%s", 
+                      group_id, topic_id, username)
+        except TimedOut:
+            logger.warning(
+                "Timed out sending subtract message for group_id=%s, topic_id=%s, retrying once",
+                group_id, topic_id
+            )
+            await asyncio.sleep(2)
+            # تلاش مجدد فقط برای اولین پیام یا تنها پیام
+            first_msg = message[0] if isinstance(message, list) else message
+            await reply_text_and_schedule_deletion(update, context, first_msg, parse_mode="Markdown")
+            
+            # اگر پیام‌های بیشتری وجود دارد، تلاش برای ارسال آنها
+            if isinstance(message, list) and len(message) > 1:
+                for idx, msg_part in enumerate(message[1:], 1):
+                    try:
+                        await reply_text_and_schedule_deletion(update, context, msg_part, parse_mode="Markdown")
+                        await asyncio.sleep(0.5)
+                    except TimedOut:
+                        logger.warning("Timed out sending message part %d for subtract in group_id=%s, topic_id=%s",
+                                     idx, group_id, topic_id)
+            logger.info("Sent contribution confirmation message after retry: group_id=%s, topic_id=%s, user=%s", 
+                      group_id, topic_id, username)
 
     except TimedOut:
         logger.error(
@@ -369,13 +454,13 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
             exc_info=True
         )
         try:
-            await update.message.reply_text(
+            await reply_text_and_schedule_deletion(update, context, 
                 "❌ خطایی رخ داد. لطفاً دوباره تلاش کنید یا با ادمین تماس بگیرید."
             )
         except TimedOut:
             logger.warning(
-                "Timed out sending error message for group_id=%s, topic_id=%s, user=%s",
-                group_id, topic_id, update.effective_user.username or update.effective_user.first_name
+                "Timed out sending error message for group_id=%s, topic_id=%s",
+                group_id, topic_id
             )
 
 
@@ -567,14 +652,35 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         try:
-            await update.message.reply_text(message, parse_mode="Markdown")
+            # حالا message می‌تواند یک رشته یا لیستی از رشته‌ها باشد
+            if isinstance(message, list):
+                for idx, msg_part in enumerate(message):
+                    await reply_text_and_schedule_deletion(update, context, msg_part, parse_mode="Markdown")
+                    if idx < len(message) - 1:
+                        # کمی مکث بین ارسال پیام‌ها
+                        await asyncio.sleep(0.5)
+            else:
+                # برای سازگاری با نسخه‌های قبلی
+                await reply_text_and_schedule_deletion(update, context, message, parse_mode="Markdown")
         except TimedOut:
             logger.warning(
                 "Timed out sending subtract message for group_id=%s, topic_id=%s, retrying once",
                 group_id, topic_id
             )
             await asyncio.sleep(2)
-            await update.message.reply_text(message, parse_mode="Markdown")
+            # تلاش مجدد فقط برای اولین پیام یا تنها پیام
+            first_msg = message[0] if isinstance(message, list) else message
+            await reply_text_and_schedule_deletion(update, context, first_msg, parse_mode="Markdown")
+            
+            # اگر پیام‌های بیشتری وجود دارد، تلاش برای ارسال آنها
+            if isinstance(message, list) and len(message) > 1:
+                for idx, msg_part in enumerate(message[1:], 1):
+                    try:
+                        await reply_text_and_schedule_deletion(update, context, msg_part, parse_mode="Markdown")
+                        await asyncio.sleep(0.5)
+                    except TimedOut:
+                        logger.warning("Timed out sending message part %d for subtract in group_id=%s, topic_id=%s",
+                                     idx, group_id, topic_id)
 
     except TimedOut:
         logger.error(
@@ -588,7 +694,7 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             e, group_id, topic_id, update.effective_user.id, exc_info=True
         )
         try:
-            await update.message.reply_text(
+            await reply_text_and_schedule_deletion(update, context, 
                 "❌ خطایی رخ داد. لطفاً دوباره تلاش کنید یا با ادمین تماس بگیرید."
             )
         except TimedOut:
@@ -744,14 +850,14 @@ async def start_from(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.debug("Prepared confirmation message for start_from")
 
         try:
-            await update.message.reply_text(message, parse_mode="Markdown")
+            await reply_text_and_schedule_deletion(update, context, message, parse_mode="Markdown")
         except TimedOut:
             logger.warning(
                 "Timed out sending start_from message for group_id=%s, topic_id=%s, retrying once",
                 group_id, topic_id
             )
             await asyncio.sleep(2)
-            await update.message.reply_text(message, parse_mode="Markdown")
+            await reply_text_and_schedule_deletion(update, context, message, parse_mode="Markdown")
 
     except TimedOut:
         logger.error(
@@ -765,7 +871,7 @@ async def start_from(update: Update, context: ContextTypes.DEFAULT_TYPE):
             e, group_id, topic_id, update.effective_user.id, exc_info=True
         )
         try:
-            await update.message.reply_text(
+            await reply_text_and_schedule_deletion(update, context, 
                 "❌ خطایی رخ داد. لطفاً دوباره تلاش کنید یا با ادمین تماس بگیرید."
             )
         except TimedOut:
@@ -799,7 +905,7 @@ async def khatm_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not topic:
             logger.debug("No topic found for khatm_status: group_id=%s, topic_id=%s",
                         group_id, topic_id)
-            await update.message.reply_text("هیچ ختمی برای این گروه/تاپیک تعریف نشده است.")
+            await reply_text_and_schedule_deletion(update, context, "هیچ ختمی برای این گروه/تاپیک تعریف نشده است.")
             return
 
         khatm_type = topic["khatm_type"]
@@ -820,14 +926,14 @@ async def khatm_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     is_active, current_total, stop_number)
 
         try:
-            await update.message.reply_text(status)
+            await reply_text_and_schedule_deletion(update, context, status)
             logger.info("Sent khatm status message: group_id=%s, topic_id=%s, type=%s",
                        group_id, topic_id, khatm_type)
         except TimedOut:
             logger.warning("Timed out sending khatm_status message for group_id=%s, topic_id=%s, retrying once",
                           group_id, topic_id)
             await asyncio.sleep(2)
-            await update.message.reply_text(status)
+            await reply_text_and_schedule_deletion(update, context, status)
             logger.info("Sent khatm status message after retry: group_id=%s, topic_id=%s",
                        group_id, topic_id)
 
@@ -839,7 +945,7 @@ async def khatm_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Error in khatm_status: group_id=%s, topic_id=%s, error=%s",
                     group_id, topic_id, e, exc_info=True)
         try:
-            await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
+            await reply_text_and_schedule_deletion(update, context, "خطایی رخ داد. لطفاً دوباره تلاش کنید.")
         except TimedOut:
             logger.warning("Timed out sending error message for group_id=%s, topic_id=%s",
                          group_id, topic_id)

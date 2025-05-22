@@ -1,21 +1,62 @@
 import logging
 import re
+import datetime
+from pytz import timezone
 from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest, Forbidden, TimedOut
 from bot.database.db import fetch_one, fetch_all, execute, write_queue
-from bot.utils.helpers import parse_number
+from bot.utils.helpers import parse_number, schedule_message_deletion, reply_text_and_schedule_deletion, send_message_and_schedule_deletion
 from bot.handlers.admin_handlers import is_admin
 import asyncio
 
 logger = logging.getLogger(__name__)
 
+def _parse_flexible_time(time_str: str) -> datetime.time | None:
+    normalized_time_str = re.sub(r"[\s._-]+", ":", time_str.strip())
+
+    possible_formats = [
+        "%H:%M",
+        "%H",
+        "%H:%M",
+    ]
+
+    if ":" not in normalized_time_str and len(normalized_time_str) <= 2:
+        possible_formats.insert(0, "%H")
+    elif ":" not in normalized_time_str and len(normalized_time_str) > 2 and len(normalized_time_str) <=4 :
+        if len(normalized_time_str) == 3:
+             normalized_time_str = "0" + normalized_time_str[0] + ":" + normalized_time_str[1:]
+        elif len(normalized_time_str) == 4:
+             normalized_time_str = normalized_time_str[:2] + ":" + normalized_time_str[2:]
+    
+    for fmt in possible_formats:
+        try:
+            if fmt == "%H" and ":" not in normalized_time_str and len(normalized_time_str) <= 2 :
+                 return datetime.datetime.strptime(normalized_time_str, "%H").time().replace(minute=0)
+            
+            dt_obj = datetime.datetime.strptime(normalized_time_str, fmt)
+            return dt_obj.time()
+        except ValueError:
+            continue
+    
+    parts = normalized_time_str.split(':')
+    if len(parts) == 2:
+        try:
+            hour = int(parts[0])
+            minute = int(parts[1])
+            if 0 <= hour <= 23 and 0 <= minute <= 59:
+                return datetime.time(hour, minute)
+        except ValueError:
+            pass
+
+    logger.warning(f"Could not parse time string: {time_str} (normalized: {normalized_time_str})")
+    return None
+
 async def reset_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Reset zekr/salavat current total and zekr_text."""
     try:
         if not await is_admin(update, context):
             logger.warning("Non-admin user %s attempted /reset_zekr", update.effective_user.id)
-            await update.message.reply_text("فقط ادمین می‌تواند آمار ذکر و صلوات را ریست کند.")
+            await reply_text_and_schedule_deletion(update, context, "فقط ادمین می‌تواند آمار ذکر و صلوات را ریست کند.")
             return
 
         group_id = update.effective_chat.id
@@ -24,7 +65,7 @@ async def reset_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
         group = await fetch_one("SELECT is_active FROM groups WHERE group_id = ?", (group_id,))
         if not group or not group["is_active"]:
             logger.debug("Group not found or inactive: group_id=%s", group_id)
-            await update.message.reply_text("گروه فعال نیست. از /start یا 'شروع' استفاده کنید.")
+            await reply_text_and_schedule_deletion(update, context, "گروه فعال نیست. از /start یا 'شروع' استفاده کنید.")
             return
 
         topic = await fetch_one(
@@ -36,11 +77,11 @@ async def reset_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         if not topic:
             logger.debug("No zekr/salavat topic found: topic_id=%s, group_id=%s", topic_id, group_id)
-            await update.message.reply_text("تاپیک ذکر یا صلوات تنظیم نشده است.")
+            await reply_text_and_schedule_deletion(update, context, "تاپیک ذکر یا صلوات تنظیم نشده است.")
             return
         if not topic["is_active"]:
             logger.debug("Topic is not active: topic_id=%s", topic_id)
-            await update.message.reply_text("این تاپیک ختم غیرفعال است. لطفاً از /khatm_zekr یا /khatm_salavat برای فعال‌سازی ختم استفاده کنید.")
+            await reply_text_and_schedule_deletion(update, context, "این تاپیک ختم غیرفعال است. لطفاً از /khatm_zekr یا /khatm_salavat برای فعال‌سازی ختم استفاده کنید.")
             return
 
         request = {
@@ -51,17 +92,16 @@ async def reset_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await write_queue.put(request)
         logger.info("Zekr/Salavat reset queued: group_id=%s, topic_id=%s", group_id, topic_id)
 
-        await update.message.reply_text("آمار ذکر و صلوات ریست شد.")
+        await reply_text_and_schedule_deletion(update, context, "آمار ذکر و صلوات ریست شد.")
     except Exception as e:
         logger.error("Error in reset_zekr: %s, group_id=%s, topic_id=%s", e, group_id, topic_id)
-        await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
+        await reply_text_and_schedule_deletion(update, context, "خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
 async def reset_kol(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Reset all khatm stats (current_total, zekr_text, current_verse_id)."""
     try:
         if not await is_admin(update, context):
             logger.warning("Non-admin user %s attempted /reset_kol", update.effective_user.id)
-            await update.message.reply_text("فقط ادمین می‌تواند کل آمار ختم‌ها را ریست کند.")
+            await reply_text_and_schedule_deletion(update, context, "فقط ادمین می‌تواند کل آمار ختم‌ها را ریست کند.")
             return
 
         group_id = update.effective_chat.id
@@ -70,7 +110,7 @@ async def reset_kol(update: Update, context: ContextTypes.DEFAULT_TYPE):
         group = await fetch_one("SELECT is_active FROM groups WHERE group_id = ?", (group_id,))
         if not group or not group["is_active"]:
             logger.debug("Group not found or inactive: group_id=%s", group_id)
-            await update.message.reply_text("گروه فعال نیست. از /start یا 'شروع' استفاده کنید.")
+            await reply_text_and_schedule_deletion(update, context, "گروه فعال نیست. از /start یا 'شروع' استفاده کنید.")
             return
 
         topic = await fetch_one(
@@ -82,11 +122,11 @@ async def reset_kol(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         if not topic:
             logger.debug("No topic found: topic_id=%s, group_id=%s", topic_id, group_id)
-            await update.message.reply_text("تاپیک ختم تنظیم نشده است. از /topic یا 'تاپیک' استفاده کنید.")
+            await reply_text_and_schedule_deletion(update, context, "تاپیک ختم تنظیم نشده است. از /topic یا 'تاپیک' استفاده کنید.")
             return
         if not topic["is_active"]:
             logger.debug("Topic is not active: topic_id=%s", topic_id)
-            await update.message.reply_text("این تاپیک ختم غیرفعال است. لطفاً از /khatm_zekr، /khatm_salavat یا /khatm_ghoran برای فعال‌سازی ختم استفاده کنید.")
+            await reply_text_and_schedule_deletion(update, context, "این تاپیک ختم غیرفعال است. لطفاً از /khatm_zekr، /khatm_salavat یا /khatm_ghoran برای فعال‌سازی ختم استفاده کنید.")
             return
 
         request = {
@@ -98,28 +138,26 @@ async def reset_kol(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await write_queue.put(request)
         logger.info("All khatm stats reset queued: group_id=%s, topic_id=%s", group_id, topic_id)
 
-        await update.message.reply_text("کل آمار ختم‌ها ریست شد.")
+        await reply_text_and_schedule_deletion(update, context, "کل آمار ختم‌ها ریست شد.")
     except Exception as e:
         logger.error("Error in reset_kol: %s, group_id=%s, topic_id=%s", e, group_id, topic_id)
-        await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
+        await reply_text_and_schedule_deletion(update, context, "خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
 async def set_max(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /max command to set maximum number."""
     try:
         if not await is_admin(update, context):
             logger.warning("Non-admin user %s attempted /max", update.effective_user.id)
-            await update.message.reply_text("فقط ادمین می‌تواند حداکثر تعداد را تنظیم کند.")
             return
 
         if not context.args:
             logger.warning("Max command called without arguments")
-            await update.message.reply_text("لطفاً عدد حداکثر را وارد کنید. مثال: /max 1000")
+            await reply_text_and_schedule_deletion(update, context, "لطفاً عدد حداکثر را وارد کنید. مثال: /max 1000")
             return
 
         number = parse_number(context.args[0])
         if number is None or number <= 0:
             logger.warning("Invalid max number: %s", context.args[0])
-            await update.message.reply_text("عدد نامعتبر است.")
+            await reply_text_and_schedule_deletion(update, context, "عدد نامعتبر است.")
             return
 
         group_id = update.effective_chat.id
@@ -128,7 +166,7 @@ async def set_max(update: Update, context: ContextTypes.DEFAULT_TYPE):
         group = await fetch_one("SELECT is_active FROM groups WHERE group_id = ?", (group_id,))
         if not group or not group["is_active"]:
             logger.debug("Group not found or inactive: group_id=%s", group_id)
-            await update.message.reply_text("گروه فعال نیست. از /start یا 'شروع' استفاده کنید.")
+            await reply_text_and_schedule_deletion(update, context, "گروه فعال نیست. از /start یا 'شروع' استفاده کنید.")
             return
 
         request = {
@@ -141,13 +179,12 @@ async def set_max(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await write_queue.put(request)
         logger.info("Max set queued: group_id=%s, topic_id=%s, max=%d", group_id, topic_id, number)
 
-        await update.message.reply_text(f"حداکثر تعداد به {number} تنظیم شد.")
+        await reply_text_and_schedule_deletion(update, context, f"حداکثر تعداد به {number} تنظیم شد.")
     except Exception as e:
         logger.error("Error in set_max: %s, group_id=%s, topic_id=%s", e, group_id, topic_id)
-        await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
+        await reply_text_and_schedule_deletion(update, context, "خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
 async def max_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /max_off command to disable maximum limit."""
     try:
         if not await is_admin(update, context):
             logger.warning("Non-admin user %s attempted /max_off", update.effective_user.id)
@@ -174,6 +211,98 @@ async def max_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("محدودیت حداکثر غیرفعال شد.")
     except Exception as e:
         logger.error("Error in max_off: %s, group_id=%s, topic_id=%s", e, group_id, topic_id)
+        await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
+
+async def max_ayat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /max_ayat command to set maximum number of verses to display."""
+    try:
+        if not await is_admin(update, context):
+            logger.warning("Non-admin user %s attempted /max_ayat", update.effective_user.id)
+            await update.message.reply_text("فقط ادمین می‌تواند حداکثر تعداد آیات نمایشی را تنظیم کند.")
+            return
+
+        if not context.args:
+            logger.warning("max_ayat command called without arguments")
+            await update.message.reply_text("لطفاً تعداد آیات نمایشی را وارد کنید. مثال: /max_ayat 20")
+            return
+
+        number = parse_number(context.args[0])
+        if number is None or number <= 0 or number > 100:
+            logger.warning("Invalid max_ayat value: %s", context.args[0])
+            await update.message.reply_text("عدد نامعتبر است. لطفاً عددی بین 1 تا 100 وارد کنید.")
+            return
+
+        group_id = update.effective_chat.id
+
+        group = await fetch_one("SELECT is_active, min_display_verses FROM groups WHERE group_id = ?", (group_id,))
+        if not group or not group["is_active"]:
+            logger.debug("Group not found or inactive: group_id=%s", group_id)
+            await update.message.reply_text("گروه فعال نیست. از /start یا 'شروع' استفاده کنید.")
+            return
+        
+        min_display_verses = group.get("min_display_verses", 1)
+        if number < min_display_verses:
+            logger.warning("max_ayat cannot be less than min_ayat: max_ayat=%s, min_ayat=%s", number, min_display_verses)
+            await update.message.reply_text(f"حداکثر آیات نمایشی ({number}) نمی‌تواند کمتر از حداقل آیات نمایشی ({min_display_verses}) باشد.")
+            return
+
+        request = {
+            "type": "max_ayat",
+            "group_id": group_id,
+            "max_display_verses": number
+        }
+        await write_queue.put(request)
+        logger.info("Max display verses set queued: group_id=%s, max_display_verses=%d", group_id, number)
+
+        await update.message.reply_text(f"حداکثر تعداد آیات نمایشی به {number} تنظیم شد.")
+    except Exception as e:
+        logger.error("Error in max_ayat: %s, group_id=%s", e, group_id)
+        await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
+
+async def min_ayat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /min_ayat command to set minimum number of verses to display."""
+    try:
+        if not await is_admin(update, context):
+            logger.warning("Non-admin user %s attempted /min_ayat", update.effective_user.id)
+            await update.message.reply_text("فقط ادمین می‌تواند حداقل تعداد آیات نمایشی را تنظیم کند.")
+            return
+
+        if not context.args:
+            logger.warning("min_ayat command called without arguments")
+            await update.message.reply_text("لطفاً حداقل تعداد آیات نمایشی را وارد کنید. مثال: /min_ayat 1")
+            return
+
+        number = parse_number(context.args[0])
+        if number is None or number <= 0 or number > 100:
+            logger.warning("Invalid min_ayat value: %s", context.args[0])
+            await update.message.reply_text("عدد نامعتبر است. لطفاً عددی بین 1 تا 100 وارد کنید.")
+            return
+
+        group_id = update.effective_chat.id
+        group = await fetch_one("SELECT is_active, max_display_verses FROM groups WHERE group_id = ?", (group_id,))
+
+        if not group or not group["is_active"]:
+            logger.debug("Group not found or inactive: group_id=%s", group_id)
+            await update.message.reply_text("گروه فعال نیست. از /start یا 'شروع' استفاده کنید.")
+            return
+
+        max_display_verses = group.get("max_display_verses", 10)
+        if number > max_display_verses:
+            logger.warning("min_ayat cannot be greater than max_ayat: min_ayat=%s, max_ayat=%s", number, max_display_verses)
+            await update.message.reply_text(f"حداقل آیات نمایشی ({number}) نمی‌تواند بیشتر از حداکثر آیات نمایشی ({max_display_verses}) باشد.")
+            return
+
+        request = {
+            "type": "min_ayat",
+            "group_id": group_id,
+            "min_display_verses": number
+        }
+        await write_queue.put(request)
+        logger.info("Min display verses set queued: group_id=%s, min_display_verses=%d", group_id, number)
+
+        await update.message.reply_text(f"حداقل تعداد آیات نمایشی به {number} تنظیم شد.")
+    except Exception as e:
+        logger.error("Error in min_ayat: %s, group_id=%s", e, group_id)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
 async def set_min(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -799,75 +928,180 @@ async def stop_on_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Error in stop_on_off: %s, group_id=%s, topic_id=%s", e, group_id, topic_id)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+async def _send_reactivation_message_job(context: ContextTypes.DEFAULT_TYPE):
+    job = context.job
+    group_id = job.data
+    try:
+        await context.bot.send_message(chat_id=group_id, text="🤖 ربات دوباره فعال شد.")
+        logger.info(f"Sent reactivation message to group {group_id}")
+    except Exception as e:
+        logger.error(f"Failed to send reactivation message to group {group_id}: {e}")
+
 async def time_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /time_off command to set inactive hours."""
+    """Handle /time_off command to set the bot's off period for the group."""
     try:
         if not await is_admin(update, context):
             logger.warning("Non-admin user %s attempted /time_off", update.effective_user.id)
-            await update.message.reply_text("فقط ادمین می‌تواند ساعات خاموشی را تنظیم کند.")
-            return
-
-        if len(context.args) < 2:
-            logger.warning("Time_off command called with insufficient arguments")
-            await update.message.reply_text("لطفاً ساعات شروع و پایان را وارد کنید. مثال: /time_off 22:00 06:00")
-            return
-
-        start_time, end_time = context.args[0], context.args[1]
-        time_pattern = r"^\d{2}:\d{2}$"
-        if not (re.match(time_pattern, start_time) and re.match(time_pattern, end_time)):
-            logger.warning("Invalid time format: start=%s, end=%s", start_time, end_time)
-            await update.message.reply_text("فرمت زمان نامعتبر است. مثال: 22:00")
             return
 
         group_id = update.effective_chat.id
+        topic_id = update.message.message_thread_id or group_id 
 
-        group = await fetch_one("SELECT is_active FROM groups WHERE group_id = ?", (group_id,))
-        if not group or not group["is_active"]:
-            logger.debug("Group not found or inactive: group_id=%s", group_id)
-            await update.message.reply_text("گروه فعال نیست. از /start یا 'شروع' استفاده کنید.")
+        if not context.args or len(context.args) < 2:
+            logger.warning("time_off command called with insufficient arguments: %s", context.args)
+            await update.message.reply_text(
+                "مثال: /time_off 22:00 06:00  یا  /time_off 22 6\n\n"
+            )
             return
+
+        start_time_str = context.args[0]
+        end_time_str = context.args[1]
+
+        start_time = _parse_flexible_time(start_time_str)
+        end_time = _parse_flexible_time(end_time_str)
+
+        if start_time is None or end_time is None:
+            invalid_times = []
+            if start_time is None:
+                invalid_times.append(f"'{start_time_str}' (زمان شروع)")
+            if end_time is None:
+                invalid_times.append(f"'{end_time_str}' (زمان پایان)")
+            
+            logger.warning("Invalid time format for time_off: start='%s', end='%s'", start_time_str, end_time_str)
+            await update.message.reply_text(
+                f"فرمت زمان وارد شده نامعتبر است: {', '.join(invalid_times)}.\n"
+                "لطفاً از فرمت‌هایی مانند HH:MM (مثلاً 22:30) یا HH MM (مثلاً 22 30) یا فقط ساعت (مثلاً 22 برای 22:00) استفاده کنید."
+            )
+            return
+        tz = timezone('Asia/Tehran')
 
         request = {
             "type": "time_off",
             "group_id": group_id,
-            "start_time": start_time,
-            "end_time": end_time
+            "time_off_start": start_time.strftime("%H:%M"),
+            "time_off_end": end_time.strftime("%H:%M"),
         }
         await write_queue.put(request)
-        logger.info("Time off set queued: group_id=%s, start=%s, end=%s", group_id, start_time, end_time)
+        logger.info("Time_off set/updated: group_id=%s, start=%s, end=%s", 
+                    group_id, request["time_off_start"], request["time_off_end"])
 
-        await update.message.reply_text(f"ربات از {start_time} تا {end_time} غیرفعال خواهد بود.")
+
+        if context.chat_data:
+            current_jobs = context.chat_data.get('reactivation_message_job', [])
+            for job_tuple in list(current_jobs):
+                if job_tuple[0] == group_id:
+                    job_tuple[1].schedule_removal()
+                    current_jobs.remove(job_tuple)
+                    logger.info(f"Removed existing reactivation job for group {group_id} due to new time_off setting.")
+            context.chat_data['reactivation_message_job'] = current_jobs
+
+        
+        now_tehran_dt = datetime.datetime.now(tz)
+        end_datetime_tehran = tz.localize(datetime.datetime.combine(now_tehran_dt.date(), end_time))
+
+        if end_time < start_time:
+
+            if now_tehran_dt.time() < end_time: 
+                pass 
+            else:
+                end_datetime_tehran += datetime.timedelta(days=1)
+        elif now_tehran_dt.time() >= end_time:
+            end_datetime_tehran += datetime.timedelta(days=1)
+
+
+        delay_seconds = (end_datetime_tehran - now_tehran_dt).total_seconds()
+
+        if delay_seconds > 0:
+            job = context.job_queue.run_once(
+                _send_reactivation_message_job,
+                when=delay_seconds,
+                data=group_id,
+                name=f"reactivate_group_{group_id}"
+            )
+            if context.chat_data:
+                if 'reactivation_message_job' not in context.chat_data:
+                    context.chat_data['reactivation_message_job'] = []
+                context.chat_data['reactivation_message_job'].append((group_id, job))
+                logger.info(f"Scheduled reactivation message for group {group_id} in {delay_seconds} seconds.")
+            else:
+                logger.warning(f"chat_data not found for group {group_id}, could not store reactivation job.")
+
+        await update.message.reply_text(
+            f"**⏳ زمان خاموشی ربات تنظیم شد!**\n\n"
+            f"▪️ **از ساعت:** `{start_time.strftime('%H:%M')}`\n"
+            f"▪️ **تا ساعت:** `{end_time.strftime('%H:%M')}`\n"
+            f"➖➖➖➖➖➖➖➖➖➖➖\n"
+            f"در این بازه، ربات به پیام‌های مشارکت پاسخ نخواهد داد.\n"
+            f"برای لغو: `time_off_disable`",
+            parse_mode="Markdown"
+        )
+
+    except Forbidden:
+        logger.warning("Bot is forbidden from sending messages in group %s", group_id)
+    except BadRequest as e:
+        logger.error("BadRequest in time_off for group %s: %s", group_id, e)
+        if "message thread not found" in str(e).lower():
+            await update.message.reply_text(
+                "خطا: به نظر می‌رسد تاپیک مورد نظر دیگر وجود ندارد یا ربات به آن دسترسی ندارد."
+            )
+        else:
+            await update.message.reply_text("خطایی رخ داد. لطفاً مطمئن شوید ربات دسترسی‌های لازم را دارد.")
+
     except Exception as e:
-        logger.error("Error in time_off: %s, group_id=%s", e, group_id)
-        await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
+        logger.error("Error in time_off: %s, group_id=%s", e, group_id, exc_info=True)
+        try:
+            await update.message.reply_text("خطایی در تنظیم زمان خاموشی رخ داد. لطفاً دوباره تلاش کنید.")
+        except Exception as e_reply:
+            logger.error("Error sending error reply in time_off: %s", e_reply)
 
 async def time_off_disable(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /time_off_disable command to disable inactive hours."""
+    """Handle /time_off_disable command to disable the bot's off period for the group."""
     try:
         if not await is_admin(update, context):
             logger.warning("Non-admin user %s attempted /time_off_disable", update.effective_user.id)
-            await update.message.reply_text("فقط ادمین می‌تواند ساعات خاموشی را غیرفعال کند.")
+            await update.message.reply_text("فقط ادمین می‌تواند زمان خاموشی ربات را غیرفعال کند.")
             return
 
         group_id = update.effective_chat.id
 
-        group = await fetch_one("SELECT is_active FROM groups WHERE group_id = ?", (group_id,))
-        if not group or not group["is_active"]:
-            logger.debug("Group not found or inactive: group_id=%s", group_id)
-            await update.message.reply_text("گروه فعال نیست. از /start یا 'شروع' استفاده کنید.")
-            return
-
         request = {
             "type": "time_off_disable",
-            "group_id": group_id
+            "group_id": group_id,
         }
         await write_queue.put(request)
-        logger.info("Time off disabled queued: group_id=%s", group_id)
+        logger.info("Time_off disabled: group_id=%s", group_id)
+        
+        if context.chat_data:
+            current_jobs = context.chat_data.get('reactivation_message_job', [])
+            job_removed = False
+            for job_tuple in list(current_jobs):
+                if job_tuple[0] == group_id:
+                    job_tuple[1].schedule_removal()
+                    current_jobs.remove(job_tuple)
+                    job_removed = True
+            if job_removed:
+                logger.info(f"Removed scheduled reactivation job for group {group_id} due to time_off_disable.")
+            context.chat_data['reactivation_message_job'] = current_jobs
 
-        await update.message.reply_text("ساعات خاموشی غیرفعال شد.")
+
+        await update.message.reply_text("زمان خاموشی ربات برای این گروه غیرفعال شد. ربات اکنون به تمام پیام‌ها پاسخ می‌دهد.")
+
+    except Forbidden:
+        logger.warning("Bot is forbidden from sending messages in group %s (time_off_disable)", group_id)
+    except BadRequest as e:
+        logger.error("BadRequest in time_off_disable for group %s: %s", group_id, e)
+        if "message thread not found" in str(e).lower():
+            await update.message.reply_text(
+                "خطا: به نظر می‌رسد تاپیک مورد نظر دیگر وجود ندارد یا ربات به آن دسترسی ندارد."
+            )
+        else:
+            await update.message.reply_text("خطایی رخ داد. لطفاً مطمئن شوید ربات دسترسی‌های لازم را دارد.")
     except Exception as e:
-        logger.error("Error in time_off_disable: %s, group_id=%s", e, group_id)
-        await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
+        logger.error("Error in time_off_disable: %s, group_id=%s", e, group_id, exc_info=True)
+        try:
+            await update.message.reply_text("خطایی در غیرفعال کردن زمان خاموشی رخ داد. لطفاً دوباره تلاش کنید.")
+        except Exception as e_reply:
+            logger.error("Error sending error reply in time_off_disable: %s", e_reply)
 
 async def lock_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /lock_on command to enable lock mode."""
@@ -959,10 +1193,15 @@ async def delete_after(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await write_queue.put(request)
         logger.info("Delete after set queued: group_id=%s, minutes=%d", group_id, minutes)
 
-        await update.message.reply_text(f"پیام‌های غیرادمین پس از {minutes} دقیقه حذف می‌شوند.")
+        sent_message = await update.message.reply_text(f"پیام‌ها پس از {minutes} دقیقه حذف می‌شوند.")
+        if sent_message:
+            await schedule_message_deletion(context, group_id, sent_message.message_id)
+            
     except Exception as e:
         logger.error("Error in delete_after: %s, group_id=%s", e, group_id)
-        await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
+        error_reply = await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
+        if error_reply:
+            await schedule_message_deletion(context, group_id, error_reply.message_id)
 
 async def delete_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /delete_off command to disable message deletion."""
@@ -996,53 +1235,100 @@ async def handle_new_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """Handle new messages for scheduled deletion."""
     try:
         if not update.message or not update.effective_chat:
-            logger.debug("Invalid message or chat in handle_new_message")
             return
 
         group_id = update.effective_chat.id
+        message_id = update.message.message_id
+        user_id = update.effective_user.id
+        
         result = await fetch_one("SELECT delete_after FROM groups WHERE group_id = ?", (group_id,))
+        
         if not result or result["delete_after"] == 0:
             return
 
-        if await is_admin(update, context):
-            logger.debug("Message from admin skipped: user_id=%s", update.effective_user.id)
+        admin_status = await is_admin(update, context)
+        if admin_status:
+            logger.debug("Message from admin skipped for deletion: user_id=%s", user_id)
             return
 
         minutes = result["delete_after"]
-        context.job_queue.run_once(
+        
+        # Check message age before scheduling deletion
+        # update.message.date is already in UTC
+        current_utc_time = datetime.datetime.now(datetime.timezone.utc)
+        message_age = current_utc_time - update.message.date
+        
+        # If the message is older than 2 minutes, don't schedule it for deletion.
+        # This prevents deleting a backlog of messages when the bot comes online
+        # or when delete_after is enabled.
+        if message_age > datetime.timedelta(minutes=2):
+            logger.info(
+                f"Skipping deletion for old message {message_id} in group {group_id} "
+                f"(age: {message_age.total_seconds() / 60:.2f} minutes). "
+                f"Rule: delete_after={minutes} min."
+            )
+            return
+            
+        logger.info("Processing non-admin message for deletion: user_id=%s, group_id=%s, message_id=%s, age_seconds=%s", 
+                   user_id, group_id, message_id, message_age.total_seconds())
+
+        job = context.job_queue.run_once(
             delete_message,
             minutes * 60,
             data={
                 "chat_id": group_id,
-                "message_id": update.message.message_id,
-                "message_thread_id": update.message.message_thread_id
+                "message_id": message_id
             },
-            name=f"delete_message_{group_id}_{update.message.message_id}"
+            name=f"delete_message_{group_id}_{message_id}"
         )
-        logger.debug("Scheduled deletion: group_id=%s, message_id=%s, after=%d minutes", group_id, update.message.message_id, minutes)
+        
+        if job:
+            logger.info("Scheduled deletion: group_id=%s, message_id=%s, after=%d minutes", 
+                       group_id, message_id, minutes)
+        else:
+            logger.error("Failed to schedule message deletion: group_id=%s, message_id=%s", 
+                       group_id, message_id)
 
     except Exception as e:
-        logger.error("Error in handle_new_message: %s, group_id=%s", e, group_id)
+        logger.error("Error in handle_new_message: %s", e, exc_info=True)
+        if 'group_id' in locals():
+            logger.error("Error context: group_id=%s, message_id=%s", group_id, update.message.message_id if update.message else "unknown")
 
 async def delete_message(context: ContextTypes.DEFAULT_TYPE):
     """Delete a scheduled message."""
+    job = context.job
+    if not job or not job.data:
+        logger.error("Invalid job data in delete_message")
+        return
+        
+    chat_id = job.data.get("chat_id")
+    message_id = job.data.get("message_id")
+    
+    if not chat_id or not message_id:
+        logger.error("Missing chat_id or message_id in job data")
+        return
+        
+    logger.info("Attempting to delete message: chat_id=%s, message_id=%s", chat_id, message_id)
+    
     try:
-        job = context.job
-        chat_id = job.data["chat_id"]
-        message_id = job.data["message_id"]
-        message_thread_id = job.data.get("message_thread_id")
-
         await context.bot.delete_message(
             chat_id=chat_id,
-            message_id=message_id,
-            message_thread_id=message_thread_id
+            message_id=message_id
         )
-        logger.info("Message deleted: chat_id=%s, message_id=%s", chat_id, message_id)
+        logger.info("Successfully deleted message: chat_id=%s, message_id=%s", chat_id, message_id)
 
-    except (BadRequest, Forbidden) as e:
-        logger.debug("Failed to delete message: chat_id=%s, message_id=%s, error=%s", chat_id, message_id, e)
+    except BadRequest as e:
+        if "message to delete not found" in str(e).lower():
+            logger.info("Message already deleted: chat_id=%s, message_id=%s", chat_id, message_id)
+        else:
+            logger.warning("BadRequest while deleting message: chat_id=%s, message_id=%s, error=%s", 
+                          chat_id, message_id, e)
+    except Forbidden as e:
+        logger.warning("Bot lacks permission to delete message: chat_id=%s, message_id=%s, error=%s", 
+                      chat_id, message_id, e)
     except Exception as e:
-        logger.error("Error in delete_message: %s, chat_id=%s, message_id=%s", e, chat_id, message_id)
+        logger.error("Failed to delete message: chat_id=%s, message_id=%s, error=%s", 
+                    chat_id, message_id, e, exc_info=True)
 
 async def jam_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /jam_on command to enable showing total in messages."""

@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS groups (
     time_off_start TEXT DEFAULT '',
     time_off_end TEXT DEFAULT '',
     show_total INTEGER DEFAULT 0,
-    max_display_verses INTEGER DEFAULT 10
+    max_display_verses INTEGER DEFAULT 10,
+    min_display_verses INTEGER DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS topics (
@@ -33,6 +34,7 @@ CREATE TABLE IF NOT EXISTS topics (
     completion_count INTEGER DEFAULT 0,
     current_verse_id INTEGER DEFAULT 0,
     is_active INTEGER DEFAULT 1,
+    is_completed INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (group_id, topic_id),

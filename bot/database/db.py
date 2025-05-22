@@ -5,6 +5,8 @@ import random
 from typing import Any, Dict, List, Optional
 from config.settings import DATABASE_PATH
 from datetime import datetime
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from bot.utils.constants import DEFAULT_COMPLETION_MESSAGE
 
 logger = logging.getLogger(__name__)
 
@@ -221,26 +223,59 @@ async def handle_contribution(cursor, request):
                 logger.error("Failed to update %s khatm totals: %s", request["khatm_type"], e, exc_info=True)
                 raise
 
-        if request.get("completed"):
+        if request.get("send_completion") and request.get("bot"):
             try:
-                await cursor.execute(
+                # خواندن completion_message
+                topic = await cursor.execute(
                     """
-                    UPDATE topics SET is_active = 0, completion_count = completion_count + 1
+                    SELECT completion_message FROM topics 
                     WHERE topic_id = ? AND group_id = ?
                     """,
-                    (request["topic_id"], request["group_id"]),
+                    (request["topic_id"], request["group_id"])
                 )
-                logger.info("Marked khatm as completed: group_id=%s, topic_id=%s", 
+                completion_message = (await topic.fetchone())["completion_message"]
+                
+                # تنظیم پیام پیش‌فرض
+                khatm_type_fa = "صلوات" if request["khatm_type"] == "salavat" else "ذکر"
+                if not completion_message:
+                    completion_message = f"دوره ختم {khatm_type_fa} به پایان رسید! 🌸"
+                
+                # ساخت دکمه‌ها
+                keyboard = [
+                    [
+                        InlineKeyboardButton("صلوات 🙏", callback_data="khatm_salavat"),
+                        InlineKeyboardButton("قرآن 📖", callback_data="khatm_ghoran"),
+                        InlineKeyboardButton("ذکر 📿", callback_data="khatm_zekr"),
+                    ]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
+                # پیام ترکیبی
+                message = f"{completion_message}\n\nآیا می‌خواهید دوره جدیدی شروع کنید؟"
+                
+                # ارسال پیام
+                await request["bot"].send_message(
+                    chat_id=request["group_id"],
+                    message_thread_id=request["topic_id"],
+                    text=message,
+                    reply_markup=reply_markup,
+                    parse_mode="Markdown"
+                )
+                
+                # تنظیم is_completed
+                await cursor.execute(
+                    """
+                    UPDATE topics SET is_completed = 1
+                    WHERE topic_id = ? AND group_id = ?
+                    """,
+                    (request["topic_id"], request["group_id"])
+                )
+                logger.info("Sent completion message and buttons for group_id=%s, topic_id=%s",
                            request["group_id"], request["topic_id"])
             except Exception as e:
-                logger.error("Failed to mark khatm as completed: %s", e, exc_info=True)
-                raise
-
-        logger.info("Successfully processed contribution: group_id=%s, topic_id=%s, amount=%d, new_total=%d", 
-                   request["group_id"], request["topic_id"], request["amount"], new_total)
+                logger.error("Failed to send completion message: %s", e, exc_info=True)
     except Exception as e:
-        logger.error("Critical error in handle_contribution: group_id=%s, topic_id=%s, error=%s",
-                    request["group_id"], request["topic_id"], e, exc_info=True)
+        logger.error("Failed to mark khatm as completed: %s", e, exc_info=True)
         raise
 
 async def handle_reset_daily(cursor, request):
@@ -683,10 +718,10 @@ async def handle_time_off(cursor, request):
         UPDATE groups SET time_off_start = ?, time_off_end = ?
         WHERE group_id = ?
         """,
-        (request["start_time"], request["end_time"], request["group_id"])
+        (request["time_off_start"], request["time_off_end"], request["group_id"])
     )
-    logger.info("Processed time_off for group_id=%s, start=%s, end=%s", 
-                request["group_id"], request["start_time"], request["end_time"])
+    logger.info("Processed time_off for group_id=%s, start=%s, end=%s",
+                request["group_id"], request["time_off_start"], request["time_off_end"])
 
 async def handle_time_off_disable(cursor, request):
     await cursor.execute(
@@ -789,6 +824,30 @@ async def handle_hadis_off(cursor, request):
         (request["group_id"],)
     )
     logger.info("Processed hadis_off for group_id=%s", request["group_id"])
+
+async def handle_max_ayat(cursor, request):
+    """Handle setting maximum number of verses to display."""
+    await cursor.execute(
+        """
+        UPDATE groups SET max_display_verses = ?
+        WHERE group_id = ?
+        """,
+        (request["max_display_verses"], request["group_id"])
+    )
+    logger.info("Processed max_ayat for group_id=%s, max_display_verses=%d", 
+                request["group_id"], request["max_display_verses"])
+
+async def handle_min_ayat(cursor, request):
+    """Handle setting minimum number of verses to display."""
+    await cursor.execute(
+        """
+        UPDATE groups SET min_display_verses = ?
+        WHERE group_id = ?
+        """,
+        (request["min_display_verses"], request["group_id"])
+    )
+    logger.info("Processed min_ayat for group_id=%s, min_display_verses=%d", 
+                request["group_id"], request["min_display_verses"])
 
 async def handle_khatm_number(cursor, request):
     completed = False
@@ -904,6 +963,8 @@ async def process_queue_request(request: Dict[str, Any]) -> None:
         "set_completion_message": handle_set_completion_message,
         "hadis_on": handle_hadis_on,
         "hadis_off": handle_hadis_off,
+        "max_ayat": handle_max_ayat,
+        "min_ayat": handle_min_ayat,
         "khatm_number": handle_khatm_number,
         "update_tag_timestamp": handle_update_tag_timestamp,
         "set_zekr_text": handle_set_zekr_text

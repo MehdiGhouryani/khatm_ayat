@@ -6,7 +6,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from bot.handlers.admin_handlers import start, stop, topic, khatm_selection, set_zekr_text, help_command, set_range, start_khatm_zekr, start_khatm_salavat, start_khatm_ghoran, set_khatm_target_number, TEXT_COMMANDS
 from bot.handlers.khatm_handlers import handle_khatm_message, subtract_khatm, start_from, khatm_status
-from bot.handlers.settings_handlers import reset_zekr, reset_kol, stop_on, stop_on_off, set_max, max_off, set_min, min_off, sepas_on, sepas_off, add_sepas, number_off, time_off, time_off_disable, lock_on, lock_off, jam_off, jam_on, set_completion_message, reset_daily, reset_off, reset_number_on, reset_number_off, delete_after, delete_off, reset_daily_groups, reset_periodic_topics, handle_new_message
+from bot.handlers.settings_handlers import reset_zekr, reset_kol, stop_on, stop_on_off, set_max, max_off, set_min, min_off, sepas_on, sepas_off, add_sepas, number_off, time_off, time_off_disable, lock_on, lock_off, jam_off, jam_on, set_completion_message, reset_daily, reset_off, reset_number_on, reset_number_off, delete_after, delete_off, reset_daily_groups, reset_periodic_topics, handle_new_message, max_ayat, min_ayat
 from bot.handlers.stats_handlers import show_total_stats, show_ranking
 from bot.handlers.hadith_handlers import hadis_on, hadis_off, send_daily_hadith
 from bot.handlers.tag_handlers import setup_handlers, TagManager
@@ -48,8 +48,10 @@ def map_handlers():
         "stop_on_off": stop_on_off,
         "set_max": set_max,
         "max_off": max_off,
+        "max_ayat": max_ayat,
         "set_min": set_min,
         "min_off": min_off,
+        "min_ayat": min_ayat,
         "sepas_on": sepas_on,
         "sepas_off": sepas_off,
         "add_sepas": add_sepas,
@@ -143,8 +145,10 @@ def register_handlers(app: Application):
         CommandHandler("amar_list", show_ranking),
         CommandHandler("max", set_max),
         CommandHandler("max_off", max_off),
+        CommandHandler("max_ayat", max_ayat),
         CommandHandler("min", set_min),
         CommandHandler("min_off", min_off),
+        CommandHandler("min_ayat", min_ayat),
         CommandHandler("sepas_on", sepas_on),
         CommandHandler("sepas_off", sepas_off),
         CommandHandler("addsepas", add_sepas),
@@ -158,7 +162,7 @@ def register_handlers(app: Application):
     for handler in command_handlers:
         app.add_handler(handler)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_khatm_message))
-    app.add_handler(MessageHandler(filters.ChatType.GROUPS & ~filters.COMMAND, handle_new_message))
+    app.add_handler(MessageHandler(filters.ChatType.GROUPS & ~filters.COMMAND, handle_new_message), group=900)
     
     subtract_pattern = r'^[-]?\d+$'
     app.add_handler(MessageHandler(

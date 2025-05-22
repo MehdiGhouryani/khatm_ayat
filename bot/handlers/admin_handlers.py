@@ -11,7 +11,6 @@ import time
 
 logger = logging.getLogger(__name__)
 
-# Add debug log for tracking function entry/exit
 def log_function_call(func):
     async def wrapper(*args, **kwargs):
         logger.debug(f"Entering function: {func.__name__}")
@@ -32,7 +31,9 @@ TEXT_COMMANDS = {
     "help": {"handler": "help_command", "admin_only": False, "aliases": ["راهنما"], "takes_args": False},
     "max": {"handler": "set_max", "admin_only": True, "aliases": ["حداکثر"], "takes_args": True},
     "max off": {"handler": "max_off", "admin_only": True, "aliases": ["حداکثر خاموش"], "takes_args": False},
+    "max_ayat": {"handler": "max_ayat", "admin_only": True, "aliases": ["حداکثر آیات"], "takes_args": True},
     "min": {"handler": "set_min", "admin_only": True, "aliases": ["حداقل"], "takes_args": True},
+    "min_ayat": {"handler": "min_ayat", "admin_only": True, "aliases": ["حداقل آیات"], "takes_args": True},
     "min off": {"handler": "min_off", "admin_only": True, "aliases": ["حداقل خاموش"], "takes_args": False},
     "sepas on": {"handler": "sepas_on", "admin_only": True, "aliases": ["سپاس روشن"], "takes_args": False},
     "sepas off": {"handler": "sepas_off", "admin_only": True, "aliases": ["سپاس خاموش"], "takes_args": False},
@@ -42,7 +43,7 @@ TEXT_COMMANDS = {
     "reset zekr": {"handler": "reset_zekr", "admin_only": True, "aliases": ["ریست ذکر"], "takes_args": False},
     "reset kol": {"handler": "reset_kol", "admin_only": True, "aliases": ["ریست کل"], "takes_args": False},
     "time off": {"handler": "time_off", "admin_only": True, "aliases": ["خاموشی"], "takes_args": True},
-    "time off disable": {"handler": "time_off_disable", "admin_only": True, "aliases": ["خاموشی غیرفعال"], "takes_args": False},
+    "time_off_disable": {"handler": "time_off_disable", "admin_only": True, "aliases": ["خاموشی غیرفعال"], "takes_args": False},
     "hadis on": {"handler": "hadis_on", "admin_only": True, "aliases": ["حدیث روزانه"], "takes_args": False},
     "hadis off": {"handler": "hadis_off", "admin_only": True, "aliases": ["حدیث خاموش"], "takes_args": False},
     "amar kol": {"handler": "show_total_stats", "admin_only": False, "aliases": ["آمار کل"], "takes_args": False},
@@ -113,12 +114,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 `amar kol` - نمایش آمار کل ختم فعال
 `amar list` - نمایش رتبه‌بندی ذاکرها
 
-تنظیم محدودیت‌های ارسال:
+تنظیم محدودیت‌های ارسال (مخصوص ذکر و صلوات):
 `max 1000` - تنظیم حداکثر تعداد مجاز
-`max off` - غیرفعال کردن حداکثر تعداد
 `min 10` - تنظیم حداقل تعداد مجاز
-`min off` - غیرفعال کردن حداقل تعداد
 
+تنظیم تعداد آیات قابل قبول برای هر مشارکت:
+`min_ayat 1` - حداقل تعداد آیات برای هر فرد
+`max_ayat 20` - حداکثر تعداد آیات نمایشی در هر پیام
 حدیث روزانه:
 `hadis on` - فعال کردن حدیث روزانه
 `hadis off` - غیرفعال کردن حدیث روزانه
@@ -133,7 +135,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 توقف ساعتی:
 `time off 23-08` - تنظیم ساعات خاموشی ربات
-`time off disable` - غیرفعال کردن ساعات خاموشی
+`time_off_disable` - غیرفعال کردن ساعات خاموشی
 
 حذف خودکار پیام‌ها:
 `delete on 01` - حذف پیام‌های ربات پس از X دقیقه
@@ -152,13 +154,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 `topic اصلی` - تنظیم نام تاپیک 
 
 
-----------------------------------------
-**دستورات مخصوص ختم قرآن**
 
-تنظیم تعداد آیات:
-`min 1` - حداقل تعداد آیات برای هر فرد
-`max 20` - حداکثر تعداد آیات برای هر فرد
-`max day 20` - حداکثر تعداد آیات روزانه هر فرد
 """
         await update.message.reply_text(help_text, parse_mode=constants.ParseMode.MARKDOWN)
         logger.info("Help message sent successfully: user_id=%s", update.effective_user.id)
@@ -229,7 +225,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not group:
             logger.info("Creating new group: group_id=%s", group_id)
             await execute(
-                "INSERT INTO groups (group_id, is_active, max_display_verses, max_number) VALUES (?, 1, 10, ?)",
+                "INSERT INTO groups (group_id, is_active, max_display_verses, min_display_verses, max_number) VALUES (?, 1, 10, 1, ?)",
                 (group_id, DEFAULT_MAX_NUMBER)
             )
         else:
@@ -432,14 +428,11 @@ async def khatm_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info("Deactivated current khatm: group_id=%s, topic_id=%s, old_type=%s",
                    group_id, topic_id, old_khatm_type)
 
-        # Update topic with new khatm type
         await execute(
-            "UPDATE topics SET khatm_type = ?, is_active = 1 WHERE topic_id = ? AND group_id = ?",
+            "UPDATE topics SET khatm_type = ?, is_active = 1, is_completed = 0, current_total = 0 WHERE topic_id = ? AND group_id = ?",
             (khatm_type, topic_id, group_id)
         )
-        logger.info("Updated topic with new khatm type: group_id=%s, topic_id=%s, type=%s",
-                   group_id, topic_id, khatm_type)
-
+        logger.info("Reset current_total for group_id=%s, topic_id=%s, khatm_type=%s", group_id, topic_id, khatm_type)
         message = f" ختم {khatm_type} فعال شد."
 
         if khatm_type == "ghoran":
@@ -552,8 +545,8 @@ async def start_khatm_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await execute(
             """
             INSERT OR REPLACE INTO topics
-            (topic_id, group_id, name, khatm_type, is_active, current_total)
-            VALUES (?, ?, ?, ?, 1, 0)
+            (topic_id, group_id, name, khatm_type, is_active, current_total, is_completed)
+            VALUES (?, ?, ?, ?, 1, 0, 0)
             """,
             (topic_id, group_id, "اصلی", "zekr")
         )
@@ -571,7 +564,7 @@ async def start_khatm_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message = (
             "**📿 ختم ذکر فعال شد** 🌱\n"
             "➖➖➖➖➖➖➖➖➖➖➖\n"
-            "**لطفاً متن ذکر را وارد کنید\.**\n"
+            "**لطفاً متن ذکر را وارد کنید**\n"
             "**مثال:** سبحان‌الله"
         )
 
@@ -838,8 +831,8 @@ async def start_khatm_salavat(update: Update, context: ContextTypes.DEFAULT_TYPE
         await execute(
             """
             INSERT OR REPLACE INTO topics
-            (topic_id, group_id, name, khatm_type, is_active, current_total, stop_number)
-            VALUES (?, ?, ?, ?, 1, 0, ?)
+            (topic_id, group_id, name, khatm_type, is_active, current_total, stop_number, is_completed)
+            VALUES (?, ?, ?, ?, 1, 0, ?, 0)
             """,
             (topic_id, group_id, "اصلی", "salavat", default_stop_number)
         )
@@ -1042,3 +1035,65 @@ async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     except Exception as e:
         logger.error("Error checking admin status: %s", e, exc_info=True)
         return False
+
+@log_function_call
+async def set_completion_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Set the completion message for a khatm by an admin."""
+    try:
+        logger.info("Processing set_completion_message: user_id=%s, chat_id=%s",
+                   update.effective_user.id, update.effective_chat.id)
+
+        if not await is_admin(update, context):
+            logger.warning("Non-admin user attempted set_completion_message: user_id=%s",
+                         update.effective_user.id)
+            return
+
+        if not context.args:
+            logger.warning("No message provided for set_completion_message")
+            await update.message.reply_text(
+                "📝 لطفاً یک پیام برای اتمام ختم وارد کنید.\n"
+                "مثال: set_completion_message ختم با موفقیت به پایان رسید!"
+            )
+            return
+
+        group_id = update.effective_chat.id
+        topic_id = update.message.message_thread_id or group_id
+        
+        # جمع‌آوری کل متن پیام از آرگومان‌ها
+        message_text = " ".join(context.args)
+        
+        # بررسی طول پیام
+        if len(message_text) > 500:
+            logger.warning("Completion message too long: length=%d", len(message_text))
+            await update.message.reply_text("پیام بیش از حد طولانی است. حداکثر ۵۰۰ کاراکتر مجاز است.")
+            return
+
+        # بررسی وجود تاپیک فعال
+        topic = await fetch_one(
+            "SELECT khatm_type, is_active FROM topics WHERE topic_id = ? AND group_id = ?",
+            (topic_id, group_id)
+        )
+
+        if not topic:
+            logger.warning("No topic found: group_id=%s, topic_id=%s", group_id, topic_id)
+            await update.message.reply_text("هیچ ختمی برای این گروه/تاپیک تنظیم نشده است.")
+            return
+
+        # ارسال درخواست به پردازشگر نوشتن
+        request = {
+            "type": "set_completion_message",
+            "group_id": group_id,
+            "topic_id": topic_id,
+            "message": message_text
+        }
+        await write_queue.put(request)
+        logger.info("Queued set_completion_message: group_id=%s, topic_id=%s", 
+                   group_id, topic_id)
+
+        await update.message.reply_text("✅ پیام اتمام ختم با موفقیت تنظیم شد.")
+        logger.info("Successfully set completion message: group_id=%s, topic_id=%s",
+                   group_id, topic_id)
+
+    except Exception as e:
+        logger.error("Error in set_completion_message: %s", e, exc_info=True)
+        await update.message.reply_text("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.")
