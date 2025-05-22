@@ -1,6 +1,7 @@
 import logging
 import re
 import datetime
+from typing import Optional
 from pytz import timezone
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -12,7 +13,7 @@ import asyncio
 
 logger = logging.getLogger(__name__)
 
-def _parse_flexible_time(time_str: str) -> datetime.time | None:
+def _parse_flexible_time(time_str: str) -> Optional[datetime.time]:
     normalized_time_str = re.sub(r"[\s._-]+", ":", time_str.strip())
 
     possible_formats = [
