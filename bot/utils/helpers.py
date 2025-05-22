@@ -249,7 +249,7 @@ async def schedule_message_deletion(context: "ContextTypes.DEFAULT_TYPE", chat_i
     except Exception as e:
         logger.error(f"Error scheduling message deletion for chat {chat_id}, message {message_id}: {e}", exc_info=True)
 
-async def reply_text_and_schedule_deletion(update: "Update", context: "ContextTypes.DEFAULT_TYPE", text: str, **kwargs) -> "Message | None":
+async def reply_text_and_schedule_deletion(update: "Update", context: "ContextTypes.DEFAULT_TYPE", text: str, **kwargs) -> "Optional[Message]":
     """Sends a reply message and schedules its deletion if configured for the group."""
     sent_message = None
     try:
@@ -269,7 +269,7 @@ async def reply_text_and_schedule_deletion(update: "Update", context: "ContextTy
                 logger.error(f"Error sending generic error reply: {e_reply}", exc_info=True)
         return sent_message # Return original sent_message which might be None
 
-async def send_message_and_schedule_deletion(context: "ContextTypes.DEFAULT_TYPE", chat_id: int, text: str, **kwargs) -> "Message | None":
+async def send_message_and_schedule_deletion(context: "ContextTypes.DEFAULT_TYPE", chat_id: int, text: str, **kwargs) -> "Optional[Message]":
     """Sends a message and schedules its deletion if configured for the group."""
     sent_message = None
     try:
