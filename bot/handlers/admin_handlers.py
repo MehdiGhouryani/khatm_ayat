@@ -3,7 +3,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 from bot.database.db import fetch_one, fetch_all, execute, write_queue
 from bot.utils.constants import KHATM_TYPES, DEFAULT_MAX_NUMBER
-from bot.utils.helpers import parse_number
+from bot.utils.helpers import parse_number, ignore_old_messages
 import re
 from telegram import constants
 from bot.utils.quran import QuranManager
@@ -71,6 +71,7 @@ TEXT_COMMANDS = {
     "status": {"handler": "khatm_status", "admin_only": False, "aliases": ["وضعیت"], "takes_args": False}
 }
 
+@ignore_old_messages()
 @log_function_call
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -200,6 +201,7 @@ async def set_max_verses(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Error in set_max_verses: %s", e, exc_info=True)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+@ignore_old_messages()
 @log_function_call
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -262,6 +264,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Error in start command: %s", e, exc_info=True)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+@ignore_old_messages()
 @log_function_call
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -287,6 +290,7 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Error in stop command: %s", e, exc_info=True)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+@ignore_old_messages()
 @log_function_call
 async def topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -385,6 +389,7 @@ async def topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "❌ خطایی رخ داد. لطفاً دوباره تلاش کنید یا با ادمین تماس بگیرید."
         )
 
+@ignore_old_messages()
 @log_function_call
 async def khatm_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -496,6 +501,7 @@ async def khatm_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "❌ خطایی رخ داد. لطفاً دوباره تلاش کنید یا با ادمین تماس بگیرید."
             )
 
+@ignore_old_messages()
 async def start_khatm_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Start a new zekr khatm and prompt for zekr text."""
     try:
@@ -579,6 +585,7 @@ async def start_khatm_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
         return ConversationHandler.END
 
+@ignore_old_messages()
 @log_function_call
 async def set_zekr_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Set the zekr text for an active khatm."""
@@ -688,6 +695,7 @@ async def set_zekr_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
         return ConversationHandler.END
 
+@ignore_old_messages()
 @log_function_call
 async def set_range(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -805,6 +813,7 @@ async def deactivate_current_khatm(group_id: int, topic_id: int) -> str:
     
     
 
+@ignore_old_messages()
 @log_function_call
 async def start_khatm_salavat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -850,6 +859,7 @@ async def start_khatm_salavat(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
         return ConversationHandler.END
 
+@ignore_old_messages()
 @log_function_call
 async def start_khatm_ghoran(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -944,6 +954,7 @@ async def start_khatm_ghoran(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     group_id, topic_id, e, exc_info=True)
         await update.message.reply_text("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+@ignore_old_messages()
 @log_function_call
 async def set_khatm_target_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:

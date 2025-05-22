@@ -10,7 +10,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, constan
 from telegram.ext import ContextTypes, CallbackQueryHandler
 from telegram.error import TimedOut, Forbidden, BadRequest
 from bot.database.db import fetch_one, fetch_all, execute, write_queue
-from bot.utils.helpers import parse_number, format_khatm_message, get_random_sepas, reply_text_and_schedule_deletion, send_message_and_schedule_deletion
+from bot.utils.helpers import parse_number, format_khatm_message, get_random_sepas, reply_text_and_schedule_deletion, send_message_and_schedule_deletion, ignore_old_messages
 from bot.utils.quran import QuranManager
 from bot.handlers.admin_handlers import is_admin, TEXT_COMMANDS
 
@@ -28,6 +28,7 @@ def log_function_call(func):
             raise
     return wrapper
 
+@ignore_old_messages()
 @log_function_call
 async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle khatm-related messages for salavat, zekr, or Quran contributions."""
@@ -465,6 +466,7 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
             
+@ignore_old_messages()
 @log_function_call
 async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle subtraction of khatm contributions by admin."""
@@ -703,6 +705,7 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 group_id, topic_id
             )
 
+@ignore_old_messages()
 @log_function_call
 async def start_from(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Set the starting number for a khatm (admin only) using write_queue."""
@@ -880,6 +883,7 @@ async def start_from(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 group_id, topic_id
             )
 
+@ignore_old_messages()
 @log_function_call
 async def khatm_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show current khatm status."""

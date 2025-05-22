@@ -7,9 +7,11 @@ from telegram.error import BadRequest, Forbidden, TimedOut
 from bot.database.db import write_queue, fetch_all
 from bot.handlers.admin_handlers import is_admin
 from config.settings import HADITH_CHANNEL
+from bot.utils.helpers import ignore_old_messages
 
 logger = logging.getLogger(__name__)
 
+@ignore_old_messages()
 async def hadis_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Enable daily hadith for a group."""
     try:
@@ -43,6 +45,7 @@ async def hadis_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Error in hadis_on: %s, group_id=%s", e, group_id)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+@ignore_old_messages()
 async def hadis_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Disable daily hadith for a group."""
     try:

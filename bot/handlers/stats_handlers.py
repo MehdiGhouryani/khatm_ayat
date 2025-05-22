@@ -4,12 +4,13 @@ from telegram.ext import ContextTypes
 from telegram.error import TimedOut, TelegramError
 from bot.database.db import fetch_one, fetch_all, DatabaseError
 from bot.utils.quran import QuranManager, QuranError
-from bot.utils.helpers import format_user_link
+from bot.utils.helpers import format_user_link, ignore_old_messages
 import asyncio
 import traceback
 
 logger = logging.getLogger(__name__)
 
+@ignore_old_messages()
 async def show_total_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /amar_kol command to show total khatm stats for salavat, zekr, or ghoran."""
     try:
@@ -151,6 +152,7 @@ async def show_total_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("خطای غیرمنتظره. با پشتیبانی تماس بگیرید.")
 
 
+@ignore_old_messages()
 async def show_ranking(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /amar_list command to show user rankings for all khatm types."""
     try:

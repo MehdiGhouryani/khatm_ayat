@@ -1,19 +1,18 @@
 import logging
 import re
 import datetime
-from typing import Optional
 from pytz import timezone
 from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest, Forbidden, TimedOut
 from bot.database.db import fetch_one, fetch_all, execute, write_queue
-from bot.utils.helpers import parse_number, schedule_message_deletion, reply_text_and_schedule_deletion, send_message_and_schedule_deletion
+from bot.utils.helpers import parse_number, schedule_message_deletion, reply_text_and_schedule_deletion, send_message_and_schedule_deletion, ignore_old_messages
 from bot.handlers.admin_handlers import is_admin
 import asyncio
 
 logger = logging.getLogger(__name__)
 
-def _parse_flexible_time(time_str: str) -> Optional[datetime.time]:
+def _parse_flexible_time(time_str: str) -> datetime.time | None:
     normalized_time_str = re.sub(r"[\s._-]+", ":", time_str.strip())
 
     possible_formats = [
@@ -53,6 +52,7 @@ def _parse_flexible_time(time_str: str) -> Optional[datetime.time]:
     logger.warning(f"Could not parse time string: {time_str} (normalized: {normalized_time_str})")
     return None
 
+@ignore_old_messages()
 async def reset_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not await is_admin(update, context):
@@ -98,6 +98,7 @@ async def reset_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Error in reset_zekr: %s, group_id=%s, topic_id=%s", e, group_id, topic_id)
         await reply_text_and_schedule_deletion(update, context, "خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+@ignore_old_messages()
 async def reset_kol(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not await is_admin(update, context):
@@ -144,6 +145,7 @@ async def reset_kol(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Error in reset_kol: %s, group_id=%s, topic_id=%s", e, group_id, topic_id)
         await reply_text_and_schedule_deletion(update, context, "خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+@ignore_old_messages()
 async def set_max(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not await is_admin(update, context):
@@ -185,6 +187,7 @@ async def set_max(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Error in set_max: %s, group_id=%s, topic_id=%s", e, group_id, topic_id)
         await reply_text_and_schedule_deletion(update, context, "خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+@ignore_old_messages()
 async def max_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not await is_admin(update, context):
@@ -214,6 +217,7 @@ async def max_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Error in max_off: %s, group_id=%s, topic_id=%s", e, group_id, topic_id)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+@ignore_old_messages()
 async def max_ayat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /max_ayat command to set maximum number of verses to display."""
     try:
@@ -260,6 +264,7 @@ async def max_ayat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Error in max_ayat: %s, group_id=%s", e, group_id)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+@ignore_old_messages()
 async def min_ayat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /min_ayat command to set minimum number of verses to display."""
     try:
@@ -306,6 +311,7 @@ async def min_ayat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Error in min_ayat: %s, group_id=%s", e, group_id)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+@ignore_old_messages()
 async def set_min(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /min command to set minimum number."""
     try:
@@ -349,6 +355,7 @@ async def set_min(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Error in set_min: %s, group_id=%s, topic_id=%s", e, group_id, topic_id)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+@ignore_old_messages()
 async def min_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /min_off command to disable minimum limit."""
     try:
@@ -379,6 +386,7 @@ async def min_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Error in min_off: %s, group_id=%s, topic_id=%s", e, group_id, topic_id)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+@ignore_old_messages()
 async def sepas_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /sepas_on command to enable sepas texts."""
     try:
@@ -407,6 +415,7 @@ async def sepas_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Error in sepas_on: %s, group_id=%s", e, group_id)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+@ignore_old_messages()
 async def sepas_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /sepas_off command to disable sepas texts."""
     try:
@@ -435,6 +444,7 @@ async def sepas_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Error in sepas_off: %s, group_id=%s", e, group_id)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+@ignore_old_messages()
 async def add_sepas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /addsepas command to add custom sepas text."""
     try:
@@ -470,6 +480,7 @@ async def add_sepas(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Error in add_sepas: %s, group_id=%s", e, group_id)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+@ignore_old_messages()
 async def reset_daily(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Enable daily reset for a group."""
     try:
@@ -499,6 +510,7 @@ async def reset_daily(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Error in reset_daily: %s, group_id=%s", e, group_id)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+@ignore_old_messages()
 async def reset_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Disable daily reset for a group."""
     try:
@@ -631,6 +643,7 @@ async def reset_periodic_topics(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error("Error in reset_periodic_topics: %s", e)
 
+@ignore_old_messages()
 async def reset_number_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /reset_number_on command to enable period reset."""
     try:
@@ -676,6 +689,7 @@ async def reset_number_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Error in reset_number_on: %s, group_id=%s, topic_id=%s", e, group_id, topic_id)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+@ignore_old_messages()
 async def reset_number_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /reset_number_off command to disable period reset."""
     try:
@@ -721,6 +735,7 @@ async def reset_number_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Error in reset_number_off: %s, group_id=%s, topic_id=%s", e, group_id, topic_id)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+@ignore_old_messages()
 async def set_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /number command to set period number for khatm."""
     try:
@@ -782,6 +797,7 @@ async def set_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Error in set_number: %s, group_id=%s, topic_id=%s", e, group_id, topic_id)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+@ignore_old_messages()
 async def number_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /number_off command to disable period number."""
     try:
@@ -827,6 +843,7 @@ async def number_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Error in number_off: %s, group_id=%s, topic_id=%s", e, group_id, topic_id)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+@ignore_old_messages()
 async def stop_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /stop_on command to set stop number for khatm."""
     try:
@@ -884,6 +901,7 @@ async def stop_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Error in stop_on: %s, group_id=%s, topic_id=%s", e, group_id, topic_id)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+@ignore_old_messages()
 async def stop_on_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /stop_on_off command to disable stop number."""
     try:
@@ -938,6 +956,7 @@ async def _send_reactivation_message_job(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Failed to send reactivation message to group {group_id}: {e}")
 
+@ignore_old_messages()
 async def time_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /time_off command to set the bot's off period for the group."""
     try:
@@ -1055,6 +1074,7 @@ async def time_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e_reply:
             logger.error("Error sending error reply in time_off: %s", e_reply)
 
+@ignore_old_messages()
 async def time_off_disable(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /time_off_disable command to disable the bot's off period for the group."""
     try:
@@ -1104,6 +1124,7 @@ async def time_off_disable(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e_reply:
             logger.error("Error sending error reply in time_off_disable: %s", e_reply)
 
+@ignore_old_messages()
 async def lock_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /lock_on command to enable lock mode."""
     try:
@@ -1132,6 +1153,7 @@ async def lock_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Error in lock_on: %s, group_id=%s", e, group_id)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+@ignore_old_messages()
 async def lock_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /lock_off command to disable lock mode."""
     try:
@@ -1160,6 +1182,7 @@ async def lock_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Error in lock_off: %s, group_id=%s", e, group_id)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+@ignore_old_messages()
 async def delete_after(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /delete_after command to set message deletion time."""
     try:
@@ -1204,6 +1227,7 @@ async def delete_after(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if error_reply:
             await schedule_message_deletion(context, group_id, error_reply.message_id)
 
+@ignore_old_messages()
 async def delete_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /delete_off command to disable message deletion."""
     try:
@@ -1232,6 +1256,7 @@ async def delete_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Error in delete_off: %s, group_id=%s", e, group_id)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+@ignore_old_messages()
 async def handle_new_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle new messages for scheduled deletion."""
     try:
@@ -1331,6 +1356,7 @@ async def delete_message(context: ContextTypes.DEFAULT_TYPE):
         logger.error("Failed to delete message: chat_id=%s, message_id=%s, error=%s", 
                     chat_id, message_id, e, exc_info=True)
 
+@ignore_old_messages()
 async def jam_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /jam_on command to enable showing total in messages."""
     try:
@@ -1359,6 +1385,7 @@ async def jam_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Error in jam_on: %s, group_id=%s", e, group_id)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+@ignore_old_messages()
 async def jam_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /jam_off command to disable showing total in messages."""
     try:
@@ -1387,6 +1414,7 @@ async def jam_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Error in jam_off: %s, group_id=%s", e, group_id)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+@ignore_old_messages()
 async def set_completion_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /set_completion_message command to set custom completion message."""
     try:

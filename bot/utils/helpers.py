@@ -5,9 +5,12 @@ from typing import Optional, List, Dict, Union, Tuple, TYPE_CHECKING
 from telegram.ext import ContextTypes
 from bot.utils.quran import QuranManager
 from bot.database.db import fetch_all, fetch_one
+import datetime
+from functools import wraps
+from telegram import Update
 
 if TYPE_CHECKING:
-    from telegram import Update, Message
+    from telegram import Message
 
 logger = logging.getLogger(__name__)
 
@@ -284,3 +287,28 @@ async def send_message_and_schedule_deletion(context: "ContextTypes.DEFAULT_TYPE
         except Exception as e_reply:
             logger.error(f"Error sending generic error reply to chat {chat_id}: {e_reply}", exc_info=True)
         return sent_message # Return original sent_message which might be None
+
+def ignore_old_messages(max_age_minutes=2):
+    """
+    Decorator to ignore messages older than specified minutes
+    to prevent processing backlog messages when bot restarts
+    """
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+            if not update.message:
+                return await func(update, context, *args, **kwargs)
+            
+            current_utc_time = datetime.datetime.now(datetime.timezone.utc)
+            message_age = current_utc_time - update.message.date
+            
+            if message_age > datetime.timedelta(minutes=max_age_minutes):
+                logger.info(
+                    f"Ignoring old message/command in handler {func.__name__} from {update.effective_user.id} "
+                    f"(age: {message_age.total_seconds() / 60:.2f} minutes)"
+                )
+                return None
+            
+            return await func(update, context, *args, **kwargs)
+        return wrapper
+    return decorator

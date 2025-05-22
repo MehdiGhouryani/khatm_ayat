@@ -16,6 +16,7 @@ from bot.database.db import init_db, process_queue_request, execute, write_queue
 from bot.utils.constants import DEFAULT_SEPAS_TEXTS, DAILY_HADITH_TIME, DAILY_RESET_TIME, DAILY_PERIOD_RESET_TIME
 from config.settings import TELEGRAM_TOKEN
 from bot.utils.logging_config import setup_logging
+from bot.utils.helpers import ignore_old_messages
 
 logger = logging.getLogger(__name__)
 logging.getLogger("apscheduler").setLevel(logging.WARNING)
@@ -86,11 +87,13 @@ def map_handlers():
         else:
             raise ValueError(f"Handler {handler_name} not found for command {cmd}")
 
+@ignore_old_messages()
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ عملیات لغو شد.")
     context.user_data.clear()
     return ConversationHandler.END
 
+@ignore_old_messages()
 async def ignore_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat:
         await context.bot.send_message(update.effective_chat.id, "دستور ناشناخته! از /help استفاده کنید.")
