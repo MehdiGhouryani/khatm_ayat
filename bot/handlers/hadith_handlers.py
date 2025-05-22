@@ -46,6 +46,7 @@ async def hadis_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
 @ignore_old_messages()
+async def hadis_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Disable daily hadith for a group."""
     try:
         if not await is_admin(update, context):
