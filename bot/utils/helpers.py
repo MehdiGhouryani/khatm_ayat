@@ -177,8 +177,8 @@ def format_khatm_message(
             action_text = "ثبت شد" if amount >= 0 else "کسر شد"
             abs_amount = abs(amount)
             message_parts = [
-                f"**{abs_amount} صلوات {action_text}!**",
-                f"**جمع کل:** {new_total} صلوات\n"
+                f"**{abs_amount:,} صلوات {action_text}!**",  
+                f"**جمع کل:** {new_total:,} صلوات\n"        
             ]
             if final_sepas:
                 message_parts.append(separator)
@@ -188,7 +188,6 @@ def format_khatm_message(
                 message_parts.append("🌱 **التماس دعا** 🌱")
             message = "\n".join(message_parts)
             return [message]
-
         elif khatm_type == "zekr":
             if not zekr_text:
                 return ["**خطا: متن ذکر مشخص نشده است.** 🌱"]
@@ -197,8 +196,8 @@ def format_khatm_message(
             abs_amount = abs(amount)
             message_parts = [
                 f"**ذکر :** {zekr_text}",
-                f"**{abs_amount} {txt_vasat} {action_text}!**",
-                f"**جمع کل:** {new_total}"
+                f"**{abs_amount:,} {txt_vasat} {action_text}!**", 
+                f"**جمع کل:** {new_total:,}"                   
             ]
             if final_sepas:
                 message_parts.append(separator)
