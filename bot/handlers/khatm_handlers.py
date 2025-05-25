@@ -1,19 +1,16 @@
 import asyncio
 import datetime
-import json
-import time
 import logging
-import re
-from datetime import timedelta, timezone
+from datetime import timezone
 from pytz import timezone
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, constants
-from telegram.ext import ContextTypes, CallbackQueryHandler
-from telegram.error import TimedOut, Forbidden, BadRequest
-from bot.database.db import fetch_one, fetch_all, execute, write_queue
-from bot.utils.helpers import parse_number, format_khatm_message, get_random_sepas, reply_text_and_schedule_deletion, send_message_and_schedule_deletion, ignore_old_messages
+from telegram import Update,constants
+from telegram.ext import ContextTypes
+from telegram.error import TimedOut
+from bot.database.db import fetch_one,write_queue
+from bot.utils.helpers import parse_number, format_khatm_message, get_random_sepas, reply_text_and_schedule_deletion, ignore_old_messages
 from bot.utils.quran import QuranManager
 from bot.handlers.admin_handlers import is_admin, TEXT_COMMANDS
-
+from telegram.constants import ParseMode
 logger = logging.getLogger(__name__)
 
 def log_function_call(func):
@@ -392,7 +389,7 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
         else:
             new_total_for_display += number
 
-        message = format_khatm_message(
+        message = await format_khatm_message(
             khatm_type=topic["khatm_type"],
             previous_total=current_topic_total_before_contribution,
             amount=number, # User's actual input number (e.g., 60)
@@ -410,13 +407,13 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
             # حالا message می‌تواند یک رشته یا لیستی از رشته‌ها باشد
             if isinstance(message, list):
                 for idx, msg_part in enumerate(message):
-                    await reply_text_and_schedule_deletion(update, context, msg_part, parse_mode="Markdown")
+                    await reply_text_and_schedule_deletion(update, context, msg_part, parse_mode=ParseMode.HTML)
                     if idx < len(message) - 1:
                         # کمی مکث بین ارسال پیام‌ها
                         await asyncio.sleep(0.5)
             else:
                 # برای سازگاری با نسخه‌های قبلی
-                await reply_text_and_schedule_deletion(update, context, message, parse_mode="Markdown")
+                await reply_text_and_schedule_deletion(update, context, message, parse_mode=ParseMode.HTML)
             logger.info("Sent contribution confirmation message: group_id=%s, topic_id=%s, user=%s", 
                       group_id, topic_id, username)
         except TimedOut:
@@ -427,13 +424,13 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
             await asyncio.sleep(2)
             # تلاش مجدد فقط برای اولین پیام یا تنها پیام
             first_msg = message[0] if isinstance(message, list) else message
-            await reply_text_and_schedule_deletion(update, context, first_msg, parse_mode="Markdown")
+            await reply_text_and_schedule_deletion(update, context, first_msg, parse_mode=ParseMode.HTML)
             
             # اگر پیام‌های بیشتری وجود دارد، تلاش برای ارسال آنها
             if isinstance(message, list) and len(message) > 1:
                 for idx, msg_part in enumerate(message[1:], 1):
                     try:
-                        await reply_text_and_schedule_deletion(update, context, msg_part, parse_mode="Markdown")
+                        await reply_text_and_schedule_deletion(update, context, msg_part, parse_mode=ParseMode.HTML)
                         await asyncio.sleep(0.5)
                     except TimedOut:
                         logger.warning("Timed out sending message part %d for subtract in group_id=%s, topic_id=%s",
@@ -523,7 +520,7 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not group or not group["is_active"]:
             logger.debug("Group not found or inactive: group_id=%s", group_id)
-            await update.message.reply_text(" از `start` یا 'شروع' استفاده کنید.",parse_mode=constants.ParseMode.MARKDOWN)
+            await update.message.reply_text("از <code>start</code> یا 'شروع' استفاده کنید.", parse_mode=constants.ParseMode.HTML)
             return
 
         topic = await fetch_one(
@@ -540,13 +537,13 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not topic:
             logger.debug("No topic found: topic_id=%s, group_id=%s", topic_id, group_id)
-            await update.message.reply_text("❌ تاپیک ختم تنظیم نشده است. از `topic` یا 'تاپیک' استفاده کنید.",parse_mode=constants.ParseMode.MARKDOWN)
+            await update.message.reply_text("❌ تاپیک ختم تنظیم نشده است. از <code>topic</code> یا 'تاپیک' استفاده کنید.", parse_mode=constants.ParseMode.HTML)
             return
         if not topic["is_active"]:
             logger.debug("Topic is not active: topic_id=%s", topic_id)
             await update.message.reply_text(
-                "برای فعال‌سازی، لطفاً از دستورات `khatm_zekr`، `khatm_salavat` یا `khatm_ghoran` استفاده کنید.",
-                parse_mode=constants.ParseMode.MARKDOWN
+                "برای فعال‌سازی، از دستورات <code>khatm_zekr</code>، <code>khatm_salavat</code> یا <code>khatm_ghoran</code> استفاده کنید.",
+                parse_mode=constants.ParseMode.HTML
             )
             return
 
@@ -640,7 +637,7 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         new_total = previous_total - number
 
         sepas_text = await get_random_sepas(group_id)
-        message = format_khatm_message(
+        message = await format_khatm_message(
             topic["khatm_type"],
             previous_total,
             -number,  # Negative number for subtraction
@@ -657,13 +654,13 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # حالا message می‌تواند یک رشته یا لیستی از رشته‌ها باشد
             if isinstance(message, list):
                 for idx, msg_part in enumerate(message):
-                    await reply_text_and_schedule_deletion(update, context, msg_part, parse_mode="Markdown")
+                    await reply_text_and_schedule_deletion(update, context, msg_part, parse_mode=ParseMode.HTML)
                     if idx < len(message) - 1:
                         # کمی مکث بین ارسال پیام‌ها
                         await asyncio.sleep(0.5)
             else:
                 # برای سازگاری با نسخه‌های قبلی
-                await reply_text_and_schedule_deletion(update, context, message, parse_mode="Markdown")
+                await reply_text_and_schedule_deletion(update, context, message, parse_mode=ParseMode.HTML)
         except TimedOut:
             logger.warning(
                 "Timed out sending subtract message for group_id=%s, topic_id=%s, retrying once",
@@ -672,13 +669,13 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await asyncio.sleep(2)
             # تلاش مجدد فقط برای اولین پیام یا تنها پیام
             first_msg = message[0] if isinstance(message, list) else message
-            await reply_text_and_schedule_deletion(update, context, first_msg, parse_mode="Markdown")
+            await reply_text_and_schedule_deletion(update, context, first_msg, parse_mode=ParseMode.HTML)
             
             # اگر پیام‌های بیشتری وجود دارد، تلاش برای ارسال آنها
             if isinstance(message, list) and len(message) > 1:
                 for idx, msg_part in enumerate(message[1:], 1):
                     try:
-                        await reply_text_and_schedule_deletion(update, context, msg_part, parse_mode="Markdown")
+                        await reply_text_and_schedule_deletion(update, context, msg_part, parse_mode=ParseMode.HTML)
                         await asyncio.sleep(0.5)
                     except TimedOut:
                         logger.warning("Timed out sending message part %d for subtract in group_id=%s, topic_id=%s",
@@ -853,14 +850,14 @@ async def start_from(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.debug("Prepared confirmation message for start_from")
 
         try:
-            await reply_text_and_schedule_deletion(update, context, message, parse_mode="Markdown")
+            await reply_text_and_schedule_deletion(update, context, message, parse_mode=ParseMode.HTML)
         except TimedOut:
             logger.warning(
                 "Timed out sending start_from message for group_id=%s, topic_id=%s, retrying once",
                 group_id, topic_id
             )
             await asyncio.sleep(2)
-            await reply_text_and_schedule_deletion(update, context, message, parse_mode="Markdown")
+            await reply_text_and_schedule_deletion(update, context, message, parse_mode=ParseMode.HTML)
 
     except TimedOut:
         logger.error(

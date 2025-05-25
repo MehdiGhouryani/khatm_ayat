@@ -51,8 +51,17 @@ def format_user_link(user_id, username, first_name):
         return link
     except Exception:
         return f"کاربر {user_id}"
+    
 
-def format_khatm_message(
+from typing import Optional, List, Dict, Union
+import html
+def escape_html(text: str) -> str:
+    if not text:
+        return ""
+    return html.escape(str(text))
+
+
+async def format_khatm_message(
     khatm_type: str,
     previous_total: int,
     amount: int,
@@ -65,155 +74,184 @@ def format_khatm_message(
     completion_count: int = 0
 ) -> Union[str, List[str]]:
     try:
-        separator = "➖➖➖➖➖➖➖➖➖➖➖"
-        final_sepas = f" **{sepas_text}** 🌱" if sepas_text else ""
+        separator = "➖➖➖➖➖➖➖➖➖➖"
+        final_sepas = f"{escape_html(sepas_text)} 🌱" if sepas_text else ""
 
         if khatm_type == "ghoran":
             if not verses:
-                return ["**خطا: اطلاعات آیات موجود نیست.** 🌱"]
-            
+                return ["<b>خطا: اطلاعات آیات موجود نیست.</b> 🌱"]
+
             processed_verse_count = amount
             if amount < 0:
                 processed_verse_count = abs(amount)
-            
-            header = f"**📖 {processed_verse_count} آیه ثبت شد!**"
+
+            header = f"📖 <b>{processed_verse_count} آیه ثبت شد !</b>"
             if amount < 0:
-                header = f"**📖 {processed_verse_count} آیه کسر شد!**"
+                header = f"📖 <b>{processed_verse_count} آیه کسر شد !</b>"
 
             parts = [header]
             if verses:
-                current_surah_name = verses[0].get('surah_name', 'نامشخص')
+                current_surah_name = escape_html(verses[0].get('surah_name', 'نامشخص'))
+                juz_number = escape_html(str(verses[0].get('juz_number', 'نامشخص')))
+                page_number = escape_html(str(verses[0].get('page_number', 'نامشخص')))
+                # محاسبه درصد پیشرفت
+                range_result = await fetch_one(
+                    "SELECT start_verse_id, end_verse_id FROM khatm_ranges WHERE group_id = ?",
+                    (group_id,)
+                )
+                if range_result:
+                    start_verse_id = range_result["start_verse_id"]
+                    end_verse_id = range_result["end_verse_id"]
+                    current_verse_id = verses[-1].get('id', start_verse_id)
+                    total_verses = end_verse_id - start_verse_id
+                    progress = ((current_verse_id - start_verse_id) / total_verses * 100) if total_verses > 0 else 0
+                    progress_text = f"{int(progress)}"
+                else:
+                    total_verses = 6236  # تعداد کل آیات قرآن
+                    current_verse_id = verses[-1].get('id', 1)
+                    progress = ((current_verse_id - 1) / total_verses * 100) if total_verses > 0 else 0
+                    progress_text = f"{int(progress)}"
+
+                # افزودن هدر پیام
                 parts.extend([
-                    f"**نام سوره فعلی:** {current_surah_name}",
-                    f"**تعداد ختم قرآن انجام شده:** {completion_count}",
-                    separator
+                    f"<b>نام سوره فعلی : {current_surah_name}</b>",
+                    f"<b>جزء : {juz_number} | صفحه : {page_number}</b>",
+                    f"<b>تعداد ختم قرآن انجام شده : {completion_count}</b>",
+                    f"<b>پیشرفت ختم : {progress_text}% قران خوانده شده</b>",
+                    separator,
+                    "<b>اعوذ بالله من الشیطان الرجیم</b>",
+                    ""
                 ])
-            
-                verses_to_display = verses[:max_display_verses]
-                
-                # حساب کردن تعداد کاراکترهای پیام تا اینجا
-                initial_chars = len("\n".join(parts))
-                
-                messages = []
-                current_message_parts = parts.copy()
-                current_verse_group = []
-                current_chars = initial_chars
-                
-                # مقدار تقریبی محدودیت کاراکتر تلگرام (با حاشیه امن)
-                max_telegram_chars = 3800
-                
-                for v_idx, v in enumerate(verses_to_display):
-                    verse_no_in_surah = str(v.get('ayah_number')) if v.get('ayah_number') is not None else ''
-                    text = v.get('text', 'متن آیه موجود نیست')
-                    verse_text = f"{verse_no_in_surah}: {text}"
-                    
-                    # اگر این آیه را اضافه کنیم، آیا از محدودیت تلگرام بیشتر می‌شود؟
-                    verse_chars = len(verse_text) + 1  # +1 برای خط جدید
-                    
-                    if current_chars + verse_chars > max_telegram_chars:
-                        # اگر این گروه آیه پر شد، آن را به پیام اضافه کنیم
-                        if current_verse_group:
-                            current_message_parts.extend(current_verse_group)
-                            
-                            # اضافه کردن متن توجه اگر آیات بیشتری وجود دارد
-                            if v_idx < len(verses_to_display):
-                                current_message_parts.append(separator)
-                                current_message_parts.append("... (ادامه آیات در پیام بعدی)")
-                            
-                            # افزودن پیام به لیست پیام‌ها
-                            messages.append("\n".join(current_message_parts))
-                            
-                            # شروع پیام جدید
-                            current_message_parts = [f"**ادامه آیات:**", separator]
-                            current_verse_group = []
-                            current_chars = len("\n".join(current_message_parts))
-                        
-                    current_verse_group.append(verse_text)
-                    if v_idx < len(verses_to_display) - 1:
-                        current_verse_group.append("")  # خط خالی بین آیات
-                    
-                    current_chars += verse_chars
-                
-                # اضافه کردن آیات باقی‌مانده به آخرین پیام
-                if current_verse_group:
-                    current_message_parts.extend(current_verse_group)
-                    
-                    if amount > max_display_verses:
-                        current_message_parts.append(separator)
-                        current_message_parts.append("توجه: آیات ارسالی شما از محدوده تعیین‌شده بیشتر بوده است.")
-                                        # اضافه کردن متن تشکر یا التماس دعا
+
+            verses_to_display = verses[:max_display_verses]
+
+            messages = []
+            current_message_parts = parts.copy()
+            current_verse_group = []
+            current_chars = len("\n".join(parts))
+            max_telegram_chars = 3800
+
+            # ردیابی سوره فعلی برای مدیریت بسم‌الله
+            current_surah_number = None
+
+            for v_idx, v in enumerate(verses_to_display):
+                verse_surah_number = v.get('surah_number', 0)
+                verse_no_in_surah = str(v.get('ayah_number', '')) if v.get('ayah_number') is not None else ''
+                text = escape_html(v.get('text', 'متن آیه موجود نیست'))
+                translation = escape_html(v.get('translation', 'ترجمه موجود نیست'))
+
+                # بررسی تغییر سوره
+                if verse_surah_number != current_surah_number:
+                    # اگر سوره جدید است و بسم‌الله دارد (به جز سوره 9)
+                    if verse_surah_number != 9 and v.get('bismillah'):
+                        bismillah_text = f"🔹<b>{v.get('bismillah', '')}</b>🔹\n"
+                        bismillah_chars = len(bismillah_text)+ 3  # +3 برای خطوط جدید
+
+                        # بررسی محدودیت کاراکتر
+                        if current_chars + bismillah_chars > max_telegram_chars:
+                            if current_verse_group:
+                                current_message_parts.extend(current_verse_group)
+                                if v_idx < len(verses_to_display):
+                                    current_message_parts.append(separator)
+                                    current_message_parts.append("... (ادامه آیات در پیام بعدی)")
+                                messages.append("\n".join(current_message_parts))
+                                current_message_parts = [f"<b>ادامه آیات :</b>", separator]
+                                current_verse_group = []
+                                current_chars = len("\n".join(current_message_parts))
+
+                        current_verse_group.extend([bismillah_text, ""])
+                        current_chars += bismillah_chars
+                    current_surah_number = verse_surah_number
+
+                # آماده‌سازی متن آیه و ترجمه
+                verse_text = f"▫️<b>آیه {verse_no_in_surah} : {text}</b>"
+                translation_text = f"{translation}"
+                verse_chars = len(verse_text) + len(translation_text) + 2  # +2 برای خطوط جدید
+
+                # بررسی محدودیت کاراکتر
+                if current_chars + verse_chars > max_telegram_chars:
+                    if current_verse_group:
+                        current_message_parts.extend(current_verse_group)
+                        if v_idx < len(verses_to_display):
+                            current_message_parts.append(separator)
+                            current_message_parts.append("... (ادامه آیات در پیام بعدی)")
+                        messages.append("\n".join(current_message_parts))
+                        current_message_parts = [f"<b>ادامه آیات:</b>", separator]
+                        current_verse_group = []
+                        current_chars = len("\n".join(current_message_parts))
+
+                current_verse_group.extend([verse_text, translation_text])
+                if v_idx < len(verses_to_display) - 1:
+                    current_verse_group.append("")  # خط خالی بین آیات
+                current_chars += verse_chars
+
+            # اضافه کردن آیات باقی‌مانده
+            if current_verse_group:
+                current_message_parts.extend(current_verse_group)
+                if amount > max_display_verses:
                     current_message_parts.append(separator)
-                    if final_sepas:
-                        current_message_parts.append(final_sepas)
-                    else:
-                        current_message_parts.append("🌱 **التماس دعا** 🌱")
-                    
-                    messages.append("\n".join(current_message_parts))
-                
-                # اگر هیچ پیامی نداریم (که معمولاً نباید اتفاق بیفتد)
-                if not messages:
-                    # ساخت پیام پیش‌فرض
-                    parts.append("هیچ آیه‌ای برای نمایش وجود ندارد.")
-                    parts.append(separator)
-                    if final_sepas:
-                        parts.append(final_sepas)
-                    else:
-                        parts.append("🌱 **التماس دعا** 🌱")
-                    messages.append("\n".join(parts))
-                
-                return messages
-            
-            # در صورتی که آیات وجود ندارند
-            parts.append("اطلاعات آیات برای نمایش موجود نیست.")
-            parts.append(separator)
-            if final_sepas:
-                parts.append(final_sepas)
-            else:
-                parts.append("🌱 **التماس دعا** 🌱")
-            
-            return ["\n".join(parts)]
-        
+                    current_message_parts.append("توجه: آیات ارسالی شما از محدوده تعیین‌شده بیشتر است.")
+                current_message_parts.append(separator)
+                if final_sepas:
+                    current_message_parts.append(f"<b>{final_sepas}</b>")
+                else:
+                    current_message_parts.append("🌱 <b>التماس دعا</b> 🌱")
+                messages.append("\n".join(current_message_parts))
+
+            # اگر هیچ پیامی تولید نشده باشد
+            if not messages:
+                parts.append("هیچ آیه‌ای برای نمایش وجود ندارد.")
+                parts.append(separator)
+                if final_sepas:
+                    parts.append(f"<b>{final_sepas}</b>")
+                else:
+                    parts.append("🌱 <b>التماس دعا</b> 🌱")
+                messages.append("\n".join(parts))
+
+            return messages
+
         elif khatm_type == "salavat":
             action_text = "ثبت شد" if amount >= 0 else "کسر شد"
             abs_amount = abs(amount)
             message_parts = [
-                f"**{abs_amount:,} صلوات {action_text}!**",  
-                f"**جمع کل:** {new_total:,} صلوات\n"        
+                f"<b>{abs_amount:,} صلوات {action_text}!</b>",
+                f"<b>جمع کل:</b> {new_total:,} صلوات\n"
             ]
             if final_sepas:
                 message_parts.append(separator)
                 message_parts.append(final_sepas)
             else:
                 message_parts.append(separator)
-                message_parts.append("🌱 **التماس دعا** 🌱")
+                message_parts.append("🌱 <b>التماس دعا</b> 🌱")
             message = "\n".join(message_parts)
             return [message]
         elif khatm_type == "zekr":
             if not zekr_text:
-                return ["**خطا: متن ذکر مشخص نشده است.** 🌱"]
-            txt_vasat='مورد'
+                return ["<b>خطا: متن ذکر مشخص نشده است.</b> 🌱"]
+            txt_vasat = 'مورد'
             action_text = "ثبت شد" if amount >= 0 else "کسر شد"
             abs_amount = abs(amount)
             message_parts = [
-                f"**ذکر :** {zekr_text}",
-                f"**{abs_amount:,} {txt_vasat} {action_text}!**", 
-                f"**جمع کل:** {new_total:,}"                   
+                f"<b>ذکر :</b> {zekr_text}",
+                f"<b>{abs_amount:,} {txt_vasat} {action_text}!</b>",
+                f"<b>جمع کل:</b> {new_total:,}"
             ]
             if final_sepas:
                 message_parts.append(separator)
                 message_parts.append(final_sepas)
             else:
                 message_parts.append(separator)
-                message_parts.append("🌱 **التماس دعا** 🌱")
+                message_parts.append("...")
             message = "\n".join(message_parts)
             return [message]
 
         else:
-            return ["**خطا: نوع ختم نامعتبر است.** 🌱"]
+            return ["<b>خطا: نوع ختم نامعتبر است.</b> 🌱"]
 
     except Exception as e:
         logger.error(f"Error formatting khatm message: {e}", exc_info=True)
-        return ["**خطا در تولید پیام ختم.** 🌱"]
+        return ["<b>خطا در تولید پیام ختم.</b> 🌱"]
+
 
 async def _delete_bot_message_job(context: "ContextTypes.DEFAULT_TYPE"):
     """Deletes a message sent by the bot."""
