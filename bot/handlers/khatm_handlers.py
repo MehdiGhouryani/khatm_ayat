@@ -286,7 +286,6 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
         logger.debug("Initial contribution request: %s", request)
 
         current_topic_total_before_contribution = topic["current_total"] # Store for display
-
         if topic["khatm_type"] == "ghoran":
             logger.debug("Processing Quran contribution details: current_db_verse_id=%s", topic["current_verse_id"])
             if not topic["current_verse_id"]:
@@ -303,7 +302,7 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 await update.message.reply_text("❌ محدوده آیات تنظیم نشده. از `set_range` استفاده کنید.", parse_mode=constants.ParseMode.MARKDOWN)
                 return
 
-            current_db_verse_id = topic["current_verse_id"] # Verse ID before this contribution
+            current_db_verse_id = topic["current_verse_id"]  # Verse ID before this contribution
             
             # Number of verses to actually display and advance the main khatm by
             if number < 0:
@@ -311,7 +310,7 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 displayed_amount = number
             else:
                 displayed_amount = min(number, group["max_display_verses"])
-            request["displayed_amount"] = displayed_amount # For db handler
+            request["displayed_amount"] = displayed_amount  # For db handler
 
             # Potential new verse_id after this contribution (based on displayed amount for topic progress)
             new_topic_verse_id = current_db_verse_id + displayed_amount
@@ -327,11 +326,26 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
             topic_verse_id_for_db_update = min(new_topic_verse_id, range_result["end_verse_id"])
             
             request.update({
-                "verse_id": topic_verse_id_for_db_update, # ID of the last verse effectively read for topic progress
-                "current_verse_id": topic_verse_id_for_db_update, # This is what will be stored in topics.current_verse_id
-                "start_verse_id": range_result["start_verse_id"], # For reference in queue processor if needed
-                "end_verse_id": range_result["end_verse_id"]   # For reference
+                "verse_id": topic_verse_id_for_db_update,  # ID of the last verse effectively read for topic progress
+                "current_verse_id": topic_verse_id_for_db_update,  # This is what will be stored in topics.current_verse_id
+                "start_verse_id": range_result["start_verse_id"],  # For reference in queue processor if needed
+                "end_verse_id": range_result["end_verse_id"]  # For reference
             })
+
+            # Check if khatm is completed and not already marked as completed
+            if is_quran_khatm_completed:
+                topic_completed = await fetch_one(
+                    "SELECT is_completed FROM topics WHERE group_id = ? AND topic_id = ?",
+                    (group_id, topic_id)
+                )
+                if topic_completed and topic_completed["is_completed"] == 0:
+                    request["send_completion"] = True
+                    request["bot"] = context.bot
+                    request["chat_id"] = group_id
+                    request["thread_id"] = topic_id if topic_id != group_id else None
+                    request["current_total"] = current_topic_total_before_contribution + displayed_amount
+                    request["khatm_type_display"] = "قرآن"
+
             logger.info("Quran khatm request update: to_store_topic_current_verse_id=%d, completed=%s, displayed_amount=%d, user_amount=%d",
                         topic_verse_id_for_db_update, is_quran_khatm_completed, displayed_amount, number)
         else: 
@@ -339,7 +353,7 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 request["completed"] = False
             else:
                 request["completed"] = topic["stop_number"] > 0 and (current_topic_total_before_contribution + number >= topic["stop_number"])
-        
+            
                 if request["completed"]:
                     topic_completed = await fetch_one(
                         "SELECT is_completed FROM topics WHERE group_id = ? AND topic_id = ?",
@@ -382,7 +396,6 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                     break
             logger.debug("Retrieved %d verses for display list", len(verses_for_display))
         
-
         new_total_for_display = current_topic_total_before_contribution
         if topic["khatm_type"] == "ghoran":
             new_total_for_display += displayed_amount
@@ -460,7 +473,6 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 "Timed out sending error message for group_id=%s, topic_id=%s",
                 group_id, topic_id
             )
-
 
             
 @ignore_old_messages()

@@ -136,7 +136,6 @@ async def handle_contribution(cursor, request):
             logger.error("Failed to insert contribution record: %s", e, exc_info=True)
             raise
 
-        # Update user totals
         if request["khatm_type"] == "ghoran":
             try:
                 await cursor.execute(
@@ -153,18 +152,34 @@ async def handle_contribution(cursor, request):
                 )
                 logger.debug("Updated user total_ayat for Quran khatm")
                 
-                await cursor.execute(
-                    """
-                    UPDATE topics SET current_verse_id = ?, current_total = current_total + ?
-                    WHERE topic_id = ? AND group_id = ?
-                    """,
-                    (
-                        request["current_verse_id"],
-                        request["amount"],
-                        request["topic_id"],
-                        request["group_id"],
-                    ),
-                )
+                # Update topics with completion count increment if completed
+                if request.get("completed"):
+                    await cursor.execute(
+                        """
+                        UPDATE topics SET current_verse_id = ?, current_total = current_total + ?, 
+                        completion_count = completion_count + 1, is_completed = 1
+                        WHERE topic_id = ? AND group_id = ?
+                        """,
+                        (
+                            request["current_verse_id"],
+                            request["amount"],
+                            request["topic_id"],
+                            request["group_id"],
+                        ),
+                    )
+                else:
+                    await cursor.execute(
+                        """
+                        UPDATE topics SET current_verse_id = ?, current_total = current_total + ?
+                        WHERE topic_id = ? AND group_id = ?
+                        """,
+                        (
+                            request["current_verse_id"],
+                            request["amount"],
+                            request["topic_id"],
+                            request["group_id"],
+                        ),
+                    )
                 logger.debug("Updated topic current_verse_id and current_total for Quran khatm")
                 # مقداردهی new_total برای قرآن
                 updated_topic = await cursor.execute(
@@ -179,6 +194,7 @@ async def handle_contribution(cursor, request):
             except Exception as e:
                 logger.error("Failed to update Quran khatm totals: %s", e, exc_info=True)
                 raise
+            
         else:
             try:
                 total_field = "total_salavat" if request["khatm_type"] == "salavat" else "total_zekr"
