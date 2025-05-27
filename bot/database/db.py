@@ -151,7 +151,7 @@ async def handle_contribution(cursor, request):
                     ),
                 )
                 logger.debug("Updated user total_ayat for Quran khatm")
-                
+
                 # Update topics with completion count increment if completed
                 if request.get("completed"):
                     await cursor.execute(
@@ -252,11 +252,10 @@ async def handle_contribution(cursor, request):
                 completion_message = (await topic.fetchone())["completion_message"]
                 
                 # تنظیم پیام پیش‌فرض
-                khatm_type_fa = "صلوات" if request["khatm_type"] == "salavat" else "ذکر"
+                khatm_type_display = request.get("khatm_type_display", "صلوات" if request["khatm_type"] == "salavat" else "قرآن" if request["khatm_type"] == "ghoran" else "ذکر")
                 if not completion_message:
-                    completion_message = f"دوره ختم {khatm_type_fa} به پایان رسید! 🌸"
-                
-                # ساخت دکمه‌ها
+                    completion_message = f"دوره ختم {khatm_type_display} به پایان رسید! 🌸"
+                # Build buttons
                 keyboard = [
                     [
                         InlineKeyboardButton("صلوات 🙏", callback_data="khatm_salavat"),
@@ -265,10 +264,7 @@ async def handle_contribution(cursor, request):
                     ]
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
-                
-                # پیام ترکیبی
-                message = f"{completion_message}\n\nآیا می‌خواهید دوره جدیدی شروع کنید؟"
-                
+                message = f"{completion_message}\n\nآیا می‌خواهید دوره جدیدی شروع کنید؟"                
                 # ارسال پیام
                 await request["bot"].send_message(
                     chat_id=request["group_id"],

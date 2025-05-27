@@ -286,6 +286,7 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
         logger.debug("Initial contribution request: %s", request)
 
         current_topic_total_before_contribution = topic["current_total"] # Store for display
+
         if topic["khatm_type"] == "ghoran":
             logger.debug("Processing Quran contribution details: current_db_verse_id=%s", topic["current_verse_id"])
             if not topic["current_verse_id"]:
@@ -473,7 +474,6 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 "Timed out sending error message for group_id=%s, topic_id=%s",
                 group_id, topic_id
             )
-
             
 @ignore_old_messages()
 @log_function_call
