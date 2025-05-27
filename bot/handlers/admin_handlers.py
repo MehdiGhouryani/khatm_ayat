@@ -1108,3 +1108,61 @@ async def set_completion_message(update: Update, context: ContextTypes.DEFAULT_T
     except Exception as e:
         logger.error("Error in set_completion_message: %s", e, exc_info=True)
         await update.message.reply_text("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.")
+
+
+
+
+        
+async def set_completion_count(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Set the completion_count for a specific topic."""
+    if not update.message or not update.effective_chat:
+        logger.error("No message or chat in update")
+        return
+
+    group_id = update.effective_chat.id
+    topic_id = update.message.message_thread_id or group_id
+    user_id = update.effective_user.id
+
+    # Check if user is admin
+    chat_member = await context.bot.get_chat_member(group_id, user_id)
+    if chat_member.status not in ("administrator", "creator"):
+        await update.message.reply_text("❌ فقط ادمین‌ها می‌توانند تعداد ختم‌های تکمیل‌شده را تنظیم کنند.")
+        return
+
+    # Parse command arguments
+    try:
+        if not context.args or len(context.args) != 1:
+            await update.message.reply_text("❌ لطفاً یک عدد معتبر وارد کنید. مثال: /set_completion_count 1")
+            return
+        new_count = int(context.args[0])
+        if new_count < 0:
+            await update.message.reply_text("❌ تعداد ختم‌ها نمی‌تواند منفی باشد.")
+            return
+    except ValueError:
+        await update.message.reply_text("❌ لطفاً یک عدد معتبر وارد کنید. مثال: /set_completion_count 1")
+        return
+
+    # Check if topic exists
+    topic = await fetch_one(
+        "SELECT khatm_type FROM topics WHERE group_id = ? AND topic_id = ?",
+        (group_id, topic_id)
+    )
+    if not topic:
+        await update.message.reply_text("❌ تاپیک ختم یافت نشد.")
+        return
+
+    # Update completion_count
+    try:
+        await execute(  # جایگزینی execute_query با execute
+            """
+            UPDATE topics SET completion_count = ?
+            WHERE group_id = ? AND topic_id = ?
+            """,
+            (new_count, group_id, topic_id)
+        )
+        await update.message.reply_text(f"✅ تعداد ختم‌های تکمیل‌شده به {new_count} تنظیم شد.")
+        logger.info("Set completion_count to %d for group_id=%s, topic_id=%s by user=%s",
+                    new_count, group_id, topic_id, user_id)
+    except Exception as e:
+        logger.error("Failed to set completion_count: %s", e, exc_info=True)
+        await update.message.reply_text("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید یا با ادمین تماس بگیرید.")

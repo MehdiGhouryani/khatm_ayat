@@ -4,7 +4,7 @@ import backoff
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ConversationHandler, ChatMemberHandler
 from telegram import Update
 from telegram.ext import ContextTypes
-from bot.handlers.admin_handlers import start, stop, topic, khatm_selection, set_zekr_text, help_command, set_range, start_khatm_zekr, start_khatm_salavat, start_khatm_ghoran, set_khatm_target_number, TEXT_COMMANDS
+from bot.handlers.admin_handlers import start, stop, topic, khatm_selection, set_zekr_text, help_command, set_range, start_khatm_zekr, start_khatm_salavat, start_khatm_ghoran, set_khatm_target_number, TEXT_COMMANDS,set_completion_count
 from bot.handlers.khatm_handlers import handle_khatm_message, subtract_khatm, start_from, khatm_status
 from bot.handlers.settings_handlers import reset_zekr, reset_kol, stop_on, stop_on_off, set_max, max_off, set_min, min_off, sepas_on, sepas_off, add_sepas, number_off, time_off, time_off_disable, lock_on, lock_off, jam_off, jam_on, set_completion_message, reset_daily, reset_off, reset_number_on, reset_number_off, delete_after, delete_off, reset_daily_groups, reset_periodic_topics, handle_new_message, max_ayat, min_ayat
 from bot.handlers.stats_handlers import show_total_stats, show_ranking
@@ -77,6 +77,7 @@ def map_handlers():
         "subtract_khatm": subtract_khatm,
         "start_from": start_from,
         "khatm_status": khatm_status,
+        "set_completion_count": set_completion_count, 
         "tag_command": lambda update, context: TagManager(context).tag_command(update, context),
         "cancel_tag": lambda update, context: TagManager(context).cancel_tag(update, context),
     }
@@ -160,6 +161,7 @@ def register_handlers(app: Application):
         CommandHandler("set_completion_message", set_completion_message),
         CommandHandler("khatm_status", khatm_status),
         CommandHandler("subtract", subtract_khatm),
+        CommandHandler("set_completion_count", set_completion_count), 
     ] + setup_handlers()
     app.add_handler(conv_handler)
     for handler in command_handlers:
