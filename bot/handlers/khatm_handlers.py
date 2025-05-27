@@ -77,12 +77,7 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 if info["admin_only"] and not is_admin_user:
                     logger.warning("Non-admin user %s attempted admin command '%s'. Ignoring.", 
                                    update.effective_user.id, command)
-
-
-                    # If it's an admin-only command AND the user is NOT an admin, reply and return.
-                    if info["admin_only"]: # and not is_admin_user is implied by outer check
-
-                         return 
+                    return 
 
                 context.args = args
                 logger.info("Executing command handler: command=%s, args=%s, user=%s", 
@@ -92,13 +87,13 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                     command_found_and_executed = True 
                 except Exception as e_handler:
                     logger.error(f"Error executing handler for command {command}: {e_handler}", exc_info=True)
-                    # Optionally send an error message to the user
                     try:
                         await update.message.reply_text("خطایی در اجرای دستور رخ داد.")
                     except:
                         pass 
                 return 
 
+        # Step 2: Check time-off for non-admins
         if not is_admin_user: 
             group_settings = await fetch_one(
                 "SELECT time_off_start, time_off_end FROM groups WHERE group_id = ?", 
@@ -133,18 +128,19 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                     else:
                         if now_dt_tehran.time() >= time_off_start_naive or now_dt_tehran.time() < time_off_end_naive:
                             is_currently_off = True
-                            logger.debug(f"  Time_off spans midnight and current time {now_dt_tehran.time()} is within {time_off_start_naive} or before {time_off_end_naive}.")
+                            logger.debug(f"  Time_off spans midnight and current time {now_dt_tehran.time()} is within {time_off_start_naive} or {time_off_end_naive} }}.")
                         else:
-                            logger.debug(f"  Time_off spans midnight but current time {now_dt_tehran.time()} is NOT within {time_off_start_naive} or before {time_off_end_naive}.")
+                            logger.debug(f"  Time_off spans midnight but current time {now_dt_tehran.time()} is NOT within {time_off_start_naive} }} or before {time_off_end_naive} .")
 
                     if is_currently_off:
-                        logger.info(f"Group {group_id} is currently in time_off period ({start_time_str}-{end_time_str}). Ignoring non-admin message from user {update.effective_user.id}.")
+                        logger.info(f"Group {group_id} is currently in time_off_period: {start_time_str} - {end_time_str}}}. Ignoring non-admin message from user {update.effective_user.id}.")
                         return 
                 except ValueError as ve:
-                    logger.error(f"Error parsing time_off times for group {group_id}: {ve}. Start: {group_settings['time_off_start']}, End: {group_settings['time_off_end']}")
+                    logger.error(f"Error parsing time_off times for group_id {group_id} }}: {ve}. Start: {group_settings['time_off_start']}, End: {group_settings['time_off_end']}")
                 except Exception as e:
-                     logger.error(f"Unexpected error during time_off check for group {group_id}: {e}", exc_info=True)
+                    logger.error(f"Unexpected error during time_off check for group_id {group_id} }}: {e}", exc_info=True)
 
+        # Step 3: Fetch group settings
         group = await fetch_one(
             """
             SELECT is_active, lock_enabled, min_number, max_number, max_display_verses, min_display_verses 
@@ -156,24 +152,25 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
             logger.warning("Group not found: group_id=%s, user=%s", 
                           group_id, update.effective_user.username or update.effective_user.first_name)
             await update.message.reply_text(
-                "گروه ثبت نشده.\n"
-                "از start یا 'شروع' استفاده کنید."
+                "گروه ثبت‌نشده است.\n"
+                "از /start یا 'شروع' استفاده کنید."
             )
             return
 
         if not group["is_active"]:
             logger.warning("Group not active: group_id=%s, user=%s", 
-                          group_id, update.effective_user.username or update.effective_user.first_name)
+                          group_id, update.effective_user_id.username or update.effective_user.first_name)
             await update.message.reply_text(
                 "گروه فعال نیست.\n"
-                "از start یا 'شروع' استفاده کنید."
+                "از /start یا 'شروع' استفاده کنید."
             )
             return
 
+        # Step 4: Fetch topic details
         topic = await fetch_one(
             """
             SELECT khatm_type, current_total, zekr_text, min_ayat, max_ayat, period_number, 
-                   stop_number, completion_message, current_verse_id, is_active, completion_count 
+                   stop_number, completion_message, current_verse_id, is_active, completion_count, is_completed 
             FROM topics WHERE topic_id = ? AND group_id = ?
             """,
             (topic_id, group_id)
@@ -186,7 +183,12 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
         if not topic["is_active"]:
             logger.warning("Topic not active: group_id=%s, topic_id=%s, user=%s", 
                           group_id, topic_id, update.effective_user.username or update.effective_user.first_name)
+            return
 
+        if topic["is_completed"]:
+            logger.warning("Topic is already completed: group_id=%s, topic_id=%s, user=%s", 
+                          group_id, topic_id, update.effective_user.username or update.effective_user.first_name)
+            await reply_text_and_schedule_deletion(update, context, "❌ این ختم تکمیل شده است. لطفاً نوع ختم جدید را از دکمه‌ها انتخاب کنید.")
             return
 
         user_id = update.effective_user.id
@@ -196,10 +198,9 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
         logger.info("Processing message for active topic: group_id=%s, topic_id=%s, khatm_type=%s, user=%s, current_total=%d", 
                    group_id, topic_id, topic["khatm_type"], username, topic["current_total"])
 
-        # Step 3: Handle awaiting states for zekr or salavat
+        # Step 5: Handle awaiting states for zekr
         if context.user_data.get("awaiting_zekr"):
             logger.info("Found awaiting_zekr state: user=%s", username)
-            
             if await is_admin(update, context):
                 logger.info("Processing awaiting_zekr state for user=%s", username)
                 from bot.handlers.admin_handlers import set_zekr_text
@@ -207,10 +208,9 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 return
             else:
                 logger.warning("Non-admin user attempted to set zekr: user=%s", username)
-                # Clear the flag if a non-admin attempts to use it, to prevent it from blocking normal number inputs
                 context.user_data.pop("awaiting_zekr", None)
-        
-        # Step 4: Process number input for contributions
+
+        # Step 6: Process number input for contributions
         number = parse_number(raw_text)
         if number is None:
             logger.debug("Message is not a number: text=%s, user=%s", raw_text, username)
@@ -221,14 +221,11 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
         logger.info("Parsed number from message: number=%d, user=%s", number, username)
 
-        # Step 5: Validate number range
+        # Step 7: Validate number range
         is_admin_user = await is_admin(update, context)
         
-        # Allow negative numbers for admins
         if number < 0 and is_admin_user:
-            # Admin can use negative numbers, proceed with the contribution
             pass
-        # For non-admins or positive numbers, apply normal validations
         elif topic["khatm_type"] == "ghoran":
             min_verses = group.get("min_display_verses", 1)
             max_verses = group.get("max_display_verses", 10)
@@ -237,20 +234,18 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                               number, min_verses, username)
                 await update.message.reply_text(f"تعداد آیات باید حداقل {min_verses} باشد.")
                 return
-        elif topic["khatm_type"] not in ["salavat", "zekr"]: # General case, shouldn't happen if khatm_type is ghoran, salavat or zekr
+        elif topic["khatm_type"] not in ["salavat", "zekr"]:
             if number < group["min_number"] or number > group["max_number"]:
                 logger.warning("Number out of range (non-salavat/non-zekr): number=%d, min=%d, max=%d, user=%s",
                              number, group["min_number"], group["max_number"], username)
                 await update.message.reply_text(f"عدد باید بین {group['min_number']} و {group['max_number']} باشد.")
                 return
-            
-        elif number < group["min_number"]: # For salavat and zekr, only check min_number if it's greater than 0
-            if group["min_number"] > 0: # Only enforce min_number if it's set to a positive value
+        elif number < group["min_number"]:
+            if group["min_number"] > 0:
                 logger.warning("Number less than min_number (salavat/zekr): number=%d, min=%d, user=%s",
-                                number, group["min_number"], username)
+                              number, group["min_number"], username)
                 await update.message.reply_text(f"عدد باید حداقل {group['min_number']} باشد.")
                 return
-        # Check max_number for salavat and zekr only if it's set and user is not admin
         elif topic["khatm_type"] in ["salavat", "zekr"] and not is_admin_user:
             if number > group["max_number"] and group["max_number"] > 0:
                 logger.warning("Number exceeds max_number (salavat/zekr): number=%d, max=%d, user=%s",
@@ -258,7 +253,7 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 await update.message.reply_text(f"عدد نمی‌تواند بیشتر از {group['max_number']} باشد.")
                 return
 
-        # Step 5.5: Ensure user exists in users table
+        # Step 8: Ensure user exists in users table
         user_exists = await fetch_one(
             "SELECT 1 FROM users WHERE user_id = ? AND group_id = ? AND topic_id = ?",
             (user_id, group_id, topic_id)
@@ -274,7 +269,7 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 (user_id, group_id, topic_id, username, first_name)
             )
 
-        # Step 6: Process contribution
+        # Step 9: Process contribution
         request = {
             "type": "contribution",
             "group_id": group_id,
@@ -282,10 +277,11 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
             "user_id": user_id,
             "amount": number,
             "khatm_type": topic["khatm_type"],
+            "username": username,
         }
         logger.debug("Initial contribution request: %s", request)
 
-        current_topic_total_before_contribution = topic["current_total"] # Store for display
+        current_topic_total_before_contribution = topic["current_total"] or 0
 
         if topic["khatm_type"] == "ghoran":
             logger.debug("Processing Quran contribution details: current_db_verse_id=%s", topic["current_verse_id"])
@@ -305,6 +301,13 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
             current_db_verse_id = topic["current_verse_id"]  # Verse ID before this contribution
             
+            # Check if already at or beyond end_verse_id
+            if current_db_verse_id >= range_result["end_verse_id"]:
+                logger.warning("Quran khatm already at or beyond end verse: group_id=%s, topic_id=%s, current_verse_id=%d, end_verse_id=%d",
+                              group_id, topic_id, current_db_verse_id, range_result["end_verse_id"])
+                await reply_text_and_schedule_deletion(update, context, "❌ ختم قرآن تکمیل شده است. لطفاً نوع ختم جدید را از دکمه‌ها انتخاب کنید.")
+                return
+
             # Number of verses to actually display and advance the main khatm by
             if number < 0:
                 # For negative numbers, use the actual number for display and advancement
@@ -418,36 +421,36 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
         logger.debug("Formatted khatm message for user")
 
         try:
-            # حالا message می‌تواند یک رشته یا لیستی از رشته‌ها باشد
+            # message can be a string or a list of strings
             if isinstance(message, list):
                 for idx, msg_part in enumerate(message):
                     await reply_text_and_schedule_deletion(update, context, msg_part, parse_mode=ParseMode.HTML)
                     if idx < len(message) - 1:
-                        # کمی مکث بین ارسال پیام‌ها
+                        # Slight delay between messages
                         await asyncio.sleep(0.5)
             else:
-                # برای سازگاری با نسخه‌های قبلی
+                # For backward compatibility
                 await reply_text_and_schedule_deletion(update, context, message, parse_mode=ParseMode.HTML)
             logger.info("Sent contribution confirmation message: group_id=%s, topic_id=%s, user=%s", 
                       group_id, topic_id, username)
         except TimedOut:
             logger.warning(
-                "Timed out sending subtract message for group_id=%s, topic_id=%s, retrying once",
+                "Timed out sending message for group_id=%s, topic_id=%s, retrying once",
                 group_id, topic_id
             )
             await asyncio.sleep(2)
-            # تلاش مجدد فقط برای اولین پیام یا تنها پیام
+            # Retry sending the first or only message
             first_msg = message[0] if isinstance(message, list) else message
             await reply_text_and_schedule_deletion(update, context, first_msg, parse_mode=ParseMode.HTML)
             
-            # اگر پیام‌های بیشتری وجود دارد، تلاش برای ارسال آنها
+            # If there are more messages, attempt to send them
             if isinstance(message, list) and len(message) > 1:
                 for idx, msg_part in enumerate(message[1:], 1):
                     try:
                         await reply_text_and_schedule_deletion(update, context, msg_part, parse_mode=ParseMode.HTML)
                         await asyncio.sleep(0.5)
                     except TimedOut:
-                        logger.warning("Timed out sending message part %d for subtract in group_id=%s, topic_id=%s",
+                        logger.warning("Timed out sending message part %d for group_id=%s, topic_id=%s",
                                      idx, group_id, topic_id)
             logger.info("Sent contribution confirmation message after retry: group_id=%s, topic_id=%s, user=%s", 
                       group_id, topic_id, username)
