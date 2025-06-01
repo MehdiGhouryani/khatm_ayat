@@ -233,38 +233,62 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
         logger.info("Parsed number from message: number=%d, user=%s", number, username)
 
-        # Step 7: Validate number range
+# Step 7: Validate number range
         is_admin_user = await is_admin(update, context)
         
+        in_topic_context = bool(update.message.message_thread_id)
+
         if number < 0 and is_admin_user:
             pass
-        elif topic["khatm_type"] == "ghoran":
-            min_verses = group.get("min_display_verses", 1)
-            max_verses = group.get("max_display_verses", 10)
-            if number < min_verses:
+        elif topic["khatm_type"] == "ghoran": #
+            min_verses = group.get("min_display_verses", 1) #
+            if number < min_verses: #
                 logger.warning("Number of verses below minimum (Quran): number=%d, min=%d, user=%s",
                               number, min_verses, username)
                 await update.message.reply_text(f"تعداد آیات باید حداقل {min_verses} باشد.")
                 return
-        elif topic["khatm_type"] not in ["salavat", "zekr"]:
-            if number < group["min_number"] or number > group["max_number"]:
-                logger.warning("Number out of range (non-salavat/non-zekr): number=%d, min=%d, max=%d, user=%s",
-                             number, group["min_number"], group["max_number"], username)
-                await update.message.reply_text(f"عدد باید بین {group['min_number']} و {group['max_number']} باشد.")
-                return
-        elif number < group["min_number"]:
-            if group["min_number"] > 0:
-                logger.warning("Number less than min_number (salavat/zekr): number=%d, min=%d, user=%s",
-                              number, group["min_number"], username)
-                await update.message.reply_text(f"عدد باید حداقل {group['min_number']} باشد.")
-                return
-        elif topic["khatm_type"] in ["salavat", "zekr"] and not is_admin_user:
-            if number > group["max_number"] and group["max_number"] > 0:
-                logger.warning("Number exceeds max_number (salavat/zekr): number=%d, max=%d, user=%s",
-                             number, group["max_number"], username)
-                await update.message.reply_text(f"عدد نمی‌تواند بیشتر از {group['max_number']} باشد.")
+            
+        elif topic["khatm_type"] in ["salavat", "zekr"]: #
+            min_limit_to_apply = 0
+            max_limit_to_apply = float('inf')
+            limit_source_description = "گروه"
+
+            if in_topic_context and topic: 
+                min_limit_to_apply = topic.get("min_ayat", 1) #
+                max_limit_to_apply = topic.get("max_ayat", 100) #
+                limit_source_description = f"تاپیک (min_ayat: {min_limit_to_apply}, max_ayat: {max_limit_to_apply})"
+                logger.info(f"Using TOPIC limits for salavat/zekr in topic {topic_id}: min={min_limit_to_apply}, max={max_limit_to_apply}")
+            elif group: 
+                min_limit_to_apply = group.get("min_number", 0) #
+                max_limit_to_apply = group.get("max_number", 100000000000) #
+                limit_source_description = f"گروه (min_number: {min_limit_to_apply}, max_number: {max_limit_to_apply})"
+                logger.info(f"Using GROUP limits for salavat/zekr in group {group_id}: min={min_limit_to_apply}, max={max_limit_to_apply}")
+            else:
+                logger.error("Could not determine limits: group or topic info missing.")
+                await update.message.reply_text("خطا در تعیین محدودیت‌ها.")
                 return
 
+            if min_limit_to_apply > 0 and number < min_limit_to_apply: #
+                logger.warning(f"Number {number} from user {username} is less than {limit_source_description} min_limit {min_limit_to_apply}")
+                await update.message.reply_text(f"عدد باید حداقل {min_limit_to_apply} باشد.")
+                return
+
+            if not is_admin_user: #
+                if max_limit_to_apply > 0 and max_limit_to_apply != float('inf') and number > max_limit_to_apply: #
+                    logger.warning(f"Number {number} from user {username} exceeds {limit_source_description} max_limit {max_limit_to_apply} for non-admin.")
+                    await update.message.reply_text(f"عدد نمی‌تواند بیشتر از {max_limit_to_apply} باشد.")
+                    return
+        
+        elif topic["khatm_type"] not in ["ghoran", "salavat", "zekr"]: #
+            group_min_number = group.get("min_number", 0) #
+            group_max_number = group.get("max_number", 100000000000) #
+            if (group_min_number > 0 and number < group_min_number) or \
+               (group_max_number > 0 and group_max_number != float('inf') and number > group_max_number): #
+                logger.warning(f"Number {number} from user {username} for khatm_type {topic['khatm_type']} is out of group range (min: {group_min_number}, max: {group_max_number})")
+                await update.message.reply_text(f"عدد باید بین {group_min_number} و {group_max_number} باشد.")
+                return
+            
+            
         # Step 8: Ensure user exists in users table
         user_exists = await fetch_one(
             "SELECT 1 FROM users WHERE user_id = ? AND group_id = ? AND topic_id = ?",

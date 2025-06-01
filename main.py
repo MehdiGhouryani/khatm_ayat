@@ -266,7 +266,7 @@ def register_handlers(app: Application):
     for handler in command_handlers:
         app.add_handler(handler)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_khatm_message))
-    app.add_handler(MessageHandler(filters.ChatType.GROUPS & ~filters.COMMAND, handle_new_message), group=900)
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, handle_new_message), group=900)
     
     subtract_pattern = r'^[-]?\d+$'
     app.add_handler(MessageHandler(
