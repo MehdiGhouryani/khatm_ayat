@@ -85,7 +85,7 @@ class TagManager:
             if not members:
                 logger.warning("No members to tag in chat %s", chat.id)
                 await self._safe_send_message(
-                    update.message, "هیچ عضوی برای تگ کردن یافت نشد.", message_thread_id
+                    update.message, "هیچ عضوی برای تگ کردن یافت نشد...", message_thread_id
                 )
                 return
                 
