@@ -3,10 +3,12 @@ import logging
 import time
 from datetime import datetime, timedelta
 from telegram import Update, ChatMember, User
-from telegram.ext import Updater, CommandHandler, ContextTypes
-from telegram.error import TelegramError, NetworkError, BadRequest, Forbidden, RetryAfter
+from telegram.ext import ContextTypes, CommandHandler
+from telegram.error import TelegramError
 from telegram.constants import ParseMode
-from bot.utils.user_store import UserStore
+from bot.database.members_db import fetch_all
+from bot.utils.constants import MAIN_GROUP_ID
+
 # تنظیم لاگ‌گذاری
 logging.basicConfig(
     level=logging.DEBUG,
@@ -30,7 +32,7 @@ class TagManager:
         self.is_cancelled = False
 
     async def tag_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /tag command to tag group members, supporting topics."""
+        """Handle /tag command to tag group members, using members.sqlite for main group and API for others."""
         start_time = time.time()
         chat = update.effective_chat
         user = update.effective_user
@@ -40,24 +42,39 @@ class TagManager:
         # بررسی نوع چت
         if chat.type not in ["group", "supergroup"]:
             logger.warning("Non-group chat %s attempted /tag", chat.id)
+            await self._safe_send_message(
+                update.message, "این دستور فقط در گروه‌ها قابل استفاده است.", message_thread_id
+            )
             return
 
         # بررسی ادمین بودن
         try:
             if not await self._is_admin(chat.id, user.id):
                 logger.warning("Non-admin user %s attempted /tag in chat %s", user.id, chat.id)
+                await self._safe_send_message(
+                    update.message, "فقط ادمین‌ها می‌توانند این دستور را اجرا کنند.", message_thread_id
+                )
                 return
         except Exception as e:
             logger.error("Error checking admin status: %s", e, exc_info=True)
+            await self._safe_send_message(
+                update.message, "خطا در بررسی وضعیت ادمین.", message_thread_id
+            )
             return
 
         # بررسی کول‌داون
         try:
             if not await self._check_cooldown(chat.id, context):
                 logger.warning("Cooldown active for group %s", chat.id)
+                await self._safe_send_message(
+                    update.message, f"لطفاً {TAG_COOLDOWN_HOURS} ساعت صبر کنید تا دوباره از این دستور استفاده کنید.", message_thread_id
+                )
                 return
         except Exception as e:
             logger.error("Error checking cooldown: %s", e, exc_info=True)
+            await self._safe_send_message(
+                update.message, "خطا در بررسی کول‌داون.", message_thread_id
+            )
             return
 
         context.chat_data["tag_task"] = self
@@ -67,6 +84,9 @@ class TagManager:
             members = await self._fetch_members(chat.id)
             if not members:
                 logger.warning("No members to tag in chat %s", chat.id)
+                await self._safe_send_message(
+                    update.message, "هیچ عضوی برای تگ کردن یافت نشد.", message_thread_id
+                )
                 return
                 
             messages = self._prepare_messages(members)
@@ -78,26 +98,35 @@ class TagManager:
                     return
                     
                 try:
+                    # اضافه کردن شماره بخش برای زیبایی
+                    header = f"📋 بخش {i+1} از {len(messages)}\n\n"
+                    full_message = header + message_text
                     await update.message.reply_text(
-                        text=message_text,
+                        text=full_message,
                         parse_mode=ParseMode.MARKDOWN_V2,
-                        disable_web_page_preview=True
+                        disable_web_page_preview=True,
+                        message_thread_id=message_thread_id
                     )
                     sent_messages += 1
                     await asyncio.sleep(TAG_MESSAGE_DELAY)
                 except Exception as e:
-                    logger.error("Error sending tag message: %s", str(e))
+                    logger.error("Error sending tag message %d: %s", i+1, str(e))
             
             context.chat_data["last_tag_time"] = datetime.utcnow().isoformat()
+            logger.info("Tag operation completed for chat %s: sent %d messages in %.2f seconds", 
+                        chat.id, sent_messages, time.time() - start_time)
             
         except Exception as e:
             logger.error("Error during tagging in chat %s: %s", chat.id, e, exc_info=True)
+            await self._safe_send_message(
+                update.message, "خطایی در عملیات تگ رخ داد.", message_thread_id
+            )
         finally:
             context.chat_data.pop("tag_task", None)
             logger.debug("Cleaned up tag_task from chat_data for chat %s", chat.id)
 
     async def cancel_tag(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /cancel_tag command to stop tagging, supporting topics."""
+        """Handle /cancel_tag command to stop tagging."""
         chat = update.effective_chat
         message_thread_id = update.message.message_thread_id if getattr(chat, 'is_forum', False) else None
         logger.info("Received /cancel_tag command in chat %s (thread: %s) from user %s", 
@@ -133,7 +162,7 @@ class TagManager:
         )
 
     async def _is_admin(self, chat_id, user_id):
-        """Check if user is an admin in the chat."""
+        """Check if user is an admin in the chat using Telegram API."""
         try:
             chat_member = await self.context.bot.get_chat_member(chat_id, user_id)
             is_admin = chat_member.status in [ChatMember.ADMINISTRATOR, ChatMember.OWNER]
@@ -166,55 +195,66 @@ class TagManager:
             raise
 
     async def _fetch_members(self, chat_id):
-        """Fetch accessible members from the chat using Telegram API and database."""
+        """Fetch active members from members.sqlite for main group, or from Telegram API for other groups."""
         members = []
-        user_store = UserStore()
-        
         try:
-            # دریافت ادمین‌ها از API تلگرام
-            logger.info(f"Fetching administrators for chat_id: {chat_id}")
-            administrators = await self.context.bot.get_chat_administrators(chat_id)
-            admin_ids = set()
-            
-            for admin in administrators:
-                if not admin.user.is_bot:
-                    members.append(admin.user)
-                    admin_ids.add(admin.user.id)
-                    logger.debug(f"Added admin {admin.user.id} ({admin.user.username}) to tag list")
-            
-            # دریافت سایر کاربران از دیتابیس
-            logger.info(f"Fetching regular users from database for chat_id: {chat_id}")
-            db_users = user_store.get_chat_users(chat_id)
-            
-            for user_data in db_users:
-                user_id, username, first_name, last_name = user_data
-                # اگر کاربر قبلاً به عنوان ادمین اضافه نشده باشد
-                if user_id not in admin_ids:
+            if chat_id == MAIN_GROUP_ID:
+                # برای گروه اصلی از members.sqlite استفاده می‌کنیم
+                logger.info(f"Fetching active users from members.sqlite for main group_id: {chat_id}")
+                db_users = await fetch_all(
+                    """
+                    SELECT user_id, username, first_name, last_name 
+                    FROM members 
+                    WHERE group_id = ? AND is_deleted = 0 AND is_bot = 0
+                    """,
+                    (chat_id,)
+                )
+                
+                for user_data in db_users:
+                    user_id = user_data["user_id"]
+                    username = user_data["username"]
+                    first_name = user_data["first_name"] or "User"
+                    last_name = user_data["last_name"]
                     user = User(
                         id=user_id,
-                        first_name=first_name or "User",
+                        first_name=first_name,
+                        last_name=last_name,
                         is_bot=False,
                         username=username
                     )
                     members.append(user)
-                    logger.debug(f"Added user {user_id} from database to tag list")
+                    logger.debug(f"Added user {user_id} ({username or first_name}) from members.sqlite to tag list")
+                
+                logger.info(f"Total {len(members)} active members found for tagging in main group {chat_id}")
+            else:
+                # برای گروه‌های دیگر از API تلگرام استفاده می‌کنیم
+                logger.info(f"Fetching members from Telegram API for group_id: {chat_id}")
+                try:
+                    async for member in self.context.bot.get_chat_members(chat_id):
+                        if not member.user.is_bot:
+                            members.append(member.user)
+                            logger.debug(f"Added user {member.user.id} ({member.user.username or member.user.first_name}) from API to tag list")
+                except TelegramError as e:
+                    logger.error(f"Telegram API error fetching members for group {chat_id}: {e}", exc_info=True)
+                    return []
+                
+                logger.info(f"Total {len(members)} members found for tagging in group {chat_id}")
             
-            logger.info(f"Total {len(members)} members found for tagging in chat {chat_id}")
             return members
             
         except Exception as e:
-            logger.error(f"Failed to fetch members: {e}", exc_info=True)
+            logger.error(f"Failed to fetch members for group {chat_id}: {e}", exc_info=True)
             return []
 
     def _prepare_messages(self, members):
-        """Prepare messages with user tags, up to 100 users per message."""
+        """Prepare messages with user tags, up to 100 users per message, with optimized formatting."""
         messages = []
         current_message = ""
-        separator = " • "  # تغییر جداکننده از خط تیره به نقطه
+        separator = " • "
 
-        for i, user in enumerate(members[:200]):  # محدود به 200 عضو
+        for i, user in enumerate(members):  # بدون محدودیت، برای پشتیبانی از 1300 نفر
             tag = self._format_tag(user)
-            if len(current_message) + len(tag) + len(separator) > MAX_MESSAGE_LENGTH:
+            if len(current_message) + len(tag) + len(separator) > MAX_MESSAGE_LENGTH - 50:  # 50 کاراکتر برای هدر
                 messages.append(current_message.rstrip(separator))
                 current_message = ""
                 logger.debug("Split message at index %d due to length limit", i)
@@ -227,7 +267,7 @@ class TagManager:
         if current_message:
             messages.append(current_message.rstrip(separator))
 
-        logger.debug("Prepared %d messages with %d total tags", len(messages), len(members[:200]))
+        logger.debug("Prepared %d messages with %d total tags", len(messages), len(members))
         return messages
 
     def _format_tag(self, user):
@@ -236,8 +276,6 @@ class TagManager:
             name = user.first_name or str(user.id)
             if user.username:
                 name = user.username
-            # فرمت کردن کاراکترهای خاص برای MarkdownV2
-            # کاراکترهای خاص در MarkdownV2 که باید escape شوند:
             special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
             for char in special_chars:
                 name = name.replace(char, f"\\{char}")
@@ -267,7 +305,6 @@ class TagManager:
             return sent_message
         except Exception as e:
             logger.error("Failed to send message: %s", e)
-            # اگر پیام ارسال نشد، سعی می‌کنیم بدون parse_mode دوباره ارسال کنیم
             if parse_mode:
                 try:
                     return await message.reply_text(

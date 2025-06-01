@@ -46,13 +46,15 @@ async def get_random_sepas(group_id):
 
 def format_user_link(user_id, username, first_name):
     try:
-        name = username.lstrip('@') if username and username.strip() else (first_name or f"کاربر {user_id}")
-        link = f"[{name}](tg://user?id={user_id})"
+        name_to_display = html.escape(username.lstrip('@') if username and username.strip() else (first_name or f"کاربر {user_id}"))
+        link = f'<a href="tg://user?id={user_id}">{name_to_display}</a>'
         return link
     except Exception:
-        return f"کاربر {user_id}"
+        return html.escape(f"کاربر {user_id}")
     
 
+
+    
 from typing import Optional, List, Dict, Union
 import html
 def escape_html(text: str) -> str:
@@ -99,19 +101,28 @@ async def format_khatm_message(
                     "SELECT start_verse_id, end_verse_id FROM khatm_ranges WHERE group_id = ?",
                     (group_id,)
                 )
-                if range_result:
-                    start_verse_id = range_result["start_verse_id"]
-                    end_verse_id = range_result["end_verse_id"]
-                    current_verse_id = verses[-1].get('id', start_verse_id)
-                    total_verses = end_verse_id - start_verse_id
-                    progress = ((current_verse_id - start_verse_id) / total_verses * 100) if total_verses > 0 else 0
-                    progress_text = f"{int(progress)}"
-                else:
-                    total_verses = 6236  # تعداد کل آیات قرآن
-                    current_verse_id = verses[-1].get('id', 1)
-                    progress = ((current_verse_id - 1) / total_verses * 100) if total_verses > 0 else 0
-                    progress_text = f"{int(progress)}"
+                progress_text = "نامشخص"
+                last_verse_page_obj = verses[-1].get('page_number')
+                
+                if last_verse_page_obj is not None:
+                    try:
+                        current_page_for_progress = int(last_verse_page_obj)
+                        total_quran_pages = 604
 
+                        if current_page_for_progress > total_quran_pages:
+                            progress = 100
+                        elif current_page_for_progress < 1:
+                            progress = 0
+                        else:
+                            progress = (current_page_for_progress / total_quran_pages * 100) if total_quran_pages > 0 else 0
+                        
+                        progress_text = f"{int(progress)}"
+                    except (ValueError, TypeError):
+                        logger.warning(f"امکان تبدیل شماره صفحه '{last_verse_page_obj}' به عدد صحیح برای محاسبه پیشرفت وجود ندارد.")
+                        progress_text = "خطا در محاسبه"
+                else:
+                    logger.warning("شماره صفحه برای آخرین آیه جهت محاسبه پیشرفت موجود نیست.")
+                    progress_text = "نامشخص"
                 # افزودن هدر پیام
                 parts.extend([
                     f"<b>نام سوره فعلی : {current_surah_name}</b>",
@@ -211,37 +222,44 @@ async def format_khatm_message(
             return messages
 
         elif khatm_type == "salavat":
+            salavat_separator = "➖➖➖➖➖➖➖➖"
             action_text = "ثبت شد" if amount >= 0 else "کسر شد"
             abs_amount = abs(amount)
             message_parts = [
                 f"<b>{abs_amount:,} صلوات {action_text}!</b>",
-                f"<b>جمع کل:</b> {new_total:,} صلوات\n"
+                f"<b>جمع کل: {new_total:,} صلوات</b>" 
             ]
-            if final_sepas:
-                message_parts.append(separator)
-                message_parts.append(final_sepas)
+            if sepas_text: 
+                message_parts.append(salavat_separator)
+                message_parts.append(f"<b>{escape_html(sepas_text)} 🌱</b>") 
             else:
-                message_parts.append(separator)
-                message_parts.append("🌱 <b>التماس دعا</b> 🌱")
+                message_parts.append(salavat_separator)
+                message_parts.append("<b>🌱 التماس دعا 🌱</b>") 
             message = "\n".join(message_parts)
             return [message]
+
         elif khatm_type == "zekr":
+            zekr_separator = "➖➖➖➖➖➖➖➖"
             if not zekr_text:
                 return ["<b>خطا: متن ذکر مشخص نشده است.</b> 🌱"]
             txt_vasat = 'مورد'
             action_text = "ثبت شد" if amount >= 0 else "کسر شد"
             abs_amount = abs(amount)
+
+
             message_parts = [
-                f"<b>ذکر :</b> {zekr_text}",
-                f"<b>{abs_amount:,} {txt_vasat} {action_text}!</b>",
-                f"<b>جمع کل:</b> {new_total:,}"
+                f"<b>ذکر: {escape_html(zekr_text)}</b>", 
+                f"<b>{abs_amount:,} {txt_vasat} {action_text}!</b>", 
+                f"<b>جمع کل: {new_total:,}</b>" 
             ]
-            if final_sepas:
-                message_parts.append(separator)
-                message_parts.append(final_sepas)
+
+            if sepas_text:
+                message_parts.append(zekr_separator) 
+                message_parts.append(f"<b>{escape_html(sepas_text)} 🌱</b>") 
             else:
-                message_parts.append(separator)
-                message_parts.append("...")
+                message_parts.append(zekr_separator) 
+                message_parts.append("<b>التماس دعا 🌱</b>") 
+
             message = "\n".join(message_parts)
             return [message]
 

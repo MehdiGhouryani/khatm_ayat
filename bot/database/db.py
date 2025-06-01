@@ -1016,3 +1016,269 @@ async def process_queue_request(request: Dict[str, Any]) -> None:
     logger.error("Failed to process queue request after %d retries: type=%s, request=%s", 
                 max_retries, req_type, request)
     raise aiosqlite.OperationalError("Failed to process queue request after retries")
+
+
+
+async def is_group_banned(group_id: int) -> bool:
+    """Check if a group is banned."""
+    try:
+        await init_db_connection()
+        result = await fetch_one(
+            "SELECT group_id FROM banned_groups WHERE group_id = ?",
+            (group_id,)
+        )
+        return bool(result)
+    except Exception as e:
+        logger.error("Error checking banned group status: %s", e, exc_info=True)
+        raise DatabaseError(f"Error checking banned group: {str(e)}", e)
+
+async def ban_group(group_id: int) -> None:
+    """Ban a group by adding it to banned_groups table."""
+    try:
+        await init_db_connection()
+        await execute(
+            "INSERT OR REPLACE INTO banned_groups (group_id, banned_at) VALUES (?, CURRENT_TIMESTAMP)",
+            (group_id,)
+        )
+        logger.info("Banned group: group_id=%s", group_id)
+    except Exception as e:
+        logger.error("Error banning group: %s", e, exc_info=True)
+        raise DatabaseError(f"Error banning group: {str(e)}", e)
+
+async def unban_group(group_id: int) -> None:
+    """Unban a group by removing it from banned_groups table."""
+    try:
+        await init_db_connection()
+        await execute(
+            "DELETE FROM banned_groups WHERE group_id = ?",
+            (group_id,)
+        )
+        logger.info("Unbanned group: group_id=%s", group_id)
+    except Exception as e:
+        logger.error("Error unbanning group: %s", e, exc_info=True)
+        raise DatabaseError(f"Error unbanning group: {str(e)}", e)
+    
+
+
+async def get_global_stats() -> dict:
+    """Fetch global statistics for the dashboard."""
+    try:
+        await init_db_connection()
+        stats = {}
+
+        # Total groups
+        total_groups = await fetch_one("SELECT COUNT(*) as count FROM groups")
+        stats['total_groups'] = total_groups['count'] if total_groups else 0
+
+        # Active groups
+        active_groups = await fetch_one("SELECT COUNT(*) as count FROM groups WHERE is_active = 1")
+        stats['active_groups'] = active_groups['count'] if active_groups else 0
+
+        # Banned groups
+        banned_groups = await fetch_one("SELECT COUNT(*) as count FROM banned_groups")
+        stats['banned_groups'] = banned_groups['count'] if banned_groups else 0
+
+        # Total users
+        total_users = await fetch_one("SELECT COUNT(DISTINCT user_id) as count FROM users")
+        stats['total_users'] = total_users['count'] if total_users else 0
+
+        # Total contributions
+        total_contributions = await fetch_one("SELECT COUNT(*) as count FROM contributions")
+        stats['total_contributions'] = total_contributions['count'] if total_contributions else 0
+
+        # Completed khatms
+        completed_khatms = await fetch_one("SELECT COUNT(*) as count FROM topics WHERE is_completed = 1")
+        stats['completed_khatms'] = completed_khatms['count'] if completed_khatms else 0
+
+        logger.info("Fetched global stats: %s", stats)
+        return stats
+    except Exception as e:
+        logger.error("Error fetching global stats: %s", e, exc_info=True)
+        raise DatabaseError(f"Error fetching global stats: {str(e)}", e)
+
+async def get_paginated_groups(page: int, per_page: int = 10) -> tuple[list, int]:
+    """Fetch groups with pagination."""
+    try:
+        await init_db_connection()
+        offset = (page - 1) * per_page
+        groups = await fetch_all(
+            "SELECT group_id, is_active FROM groups LIMIT ? OFFSET ?",
+            (per_page, offset)
+        )
+        total_groups = await fetch_one("SELECT COUNT(*) as count FROM groups")
+        total_pages = (total_groups['count'] + per_page - 1) // per_page if total_groups else 1
+        logger.info("Fetched paginated groups: page=%s, per_page=%s, total_pages=%s", page, per_page, total_pages)
+        return groups, total_pages
+    except Exception as e:
+        logger.error("Error fetching paginated groups: %s", e, exc_info=True)
+        raise DatabaseError(f"Error fetching paginated groups: {str(e)}", e)
+    
+async def get_group_details(group_id: int) -> dict:
+    """Fetch detailed information about a group."""
+    try:
+        await init_db_connection()
+        details = {}
+
+        # Get member count
+        member_count = await fetch_one(
+            "SELECT COUNT(DISTINCT user_id) as count FROM users WHERE group_id = ?",
+            (group_id,)
+        )
+        details['member_count'] = member_count['count'] if member_count else 0
+
+        # Get active khatms
+        active_khatms = await fetch_one(
+            "SELECT COUNT(*) as count FROM topics WHERE group_id = ? AND is_active = 1 AND is_completed = 0",
+            (group_id,)
+        )
+        details['active_khatms'] = active_khatms['count'] if active_khatms else 0
+
+        logger.info("Fetched group details: group_id=%s, details=%s", group_id, details)
+        return details
+    except Exception as e:
+        logger.error("Error fetching group details: %s", str(e), exc_info=True)
+        raise DatabaseError(f"Error fetching group details: {str(e)}", e)
+
+async def search_groups(search_id: str) -> list:
+    """Search groups by group_id."""
+    try:
+        await init_db_connection()
+        search_pattern = f"%{search_id}%"
+        groups = await fetch_all(
+            "SELECT group_id, is_active FROM groups WHERE CAST(group_id AS TEXT) LIKE ?",
+            (search_pattern,)
+        )
+        logger.info("Searched groups: search_id=%s, found=%s", search_id, len(groups))
+        return groups
+    except Exception as e:
+        logger.error("Error searching groups: %s", str(e), exc_info=True)
+        raise DatabaseError(f"Error searching groups: {str(e)}", e)
+
+
+async def set_group_invite_link(group_id: int, invite_link: str) -> None:
+    """Set or update the invite link for a group."""
+    try:
+        await init_db_connection()
+        await execute(
+            "UPDATE groups SET invite_link = ? WHERE group_id = ?",
+            (invite_link, group_id)
+        )
+        logger.info("Set invite link for group: group_id=%s, link=%s", group_id, invite_link)
+    except Exception as e:
+        logger.error("Error setting invite link: %s", str(e), exc_info=True)
+        raise DatabaseError(f"Error setting invite link: {str(e)}", e)
+
+async def get_group_invite_link(group_id: int) -> str:
+    """Get the invite link for a group."""
+    try:
+        await init_db_connection()
+        result = await fetch_one(
+            "SELECT invite_link FROM groups WHERE group_id = ?",
+            (group_id,)
+        )
+        return result['invite_link'] if result and result['invite_link'] else ""
+    except Exception as e:
+        logger.error("Error getting invite link: %s", str(e), exc_info=True)
+        raise DatabaseError(f"Error getting invite link: {str(e)}", e)
+
+async def remove_group_invite_link(group_id: int) -> None:
+    """Remove the invite link for a group."""
+    try:
+        await init_db_connection()
+        await execute(
+            "UPDATE groups SET invite_link = '' WHERE group_id = ?",
+            (group_id,)
+        )
+        logger.info("Removed invite link for group: group_id=%s", group_id)
+    except Exception as e:
+        logger.error("Error removing invite link: %s", str(e), exc_info=True)
+        raise DatabaseError(f"Error removing invite link: {str(e)}", e)
+async def set_group_title(group_id: int, title: str) -> None:
+    """Set or update the title for a group."""
+    try:
+        await init_db_connection()
+        await execute(
+            "UPDATE groups SET title = ? WHERE group_id = ?",
+            (title, group_id)
+        )
+        logger.info("Set group title: group_id=%s, title=%s", group_id, title)
+    except Exception as e:
+        logger.error("Error setting group title: %s", str(e), exc_info=True)
+        raise DatabaseError(f"Error setting group title: {str(e)}", e)
+
+async def ban_user(user_id: int) -> None:
+    """Ban a user by adding them to banned_users table."""
+    try:
+        await init_db_connection()
+        await execute(
+            "INSERT OR REPLACE INTO banned_users (user_id) VALUES (?)",
+            (user_id,)
+        )
+        logger.info("Banned user: user_id=%s", user_id)
+    except Exception as e:
+        logger.error("Error banning user: %s", str(e), exc_info=True)
+        raise DatabaseError(f"Error banning user: {str(e)}", e)
+
+async def unban_user(user_id: int) -> None:
+    """Unban a user by removing them from banned_users table."""
+    try:
+        await init_db_connection()
+        await execute(
+            "DELETE FROM banned_users WHERE user_id = ?",
+            (user_id,)
+        )
+        logger.info("Unbanned user: user_id=%s", user_id)
+    except Exception as e:
+        logger.error("Error unbanning user: %s", str(e), exc_info=True)
+        raise DatabaseError(f"Error unbanning user: {str(e)}", e)
+
+async def is_user_banned(user_id: int) -> bool:
+    """Check if a user is banned."""
+    try:
+        await init_db_connection()
+        result = await fetch_one(
+            "SELECT user_id FROM banned_users WHERE user_id = ?",
+            (user_id,)
+        )
+        return bool(result)
+    except Exception as e:
+        logger.error("Error checking banned user: %s", str(e), exc_info=True)
+        raise DatabaseError(f"Error checking banned user: {str(e)}", e)
+
+async def get_group_users(group_id: int, page: int = 1, per_page: int = 10) -> tuple[list, int]:
+    """Fetch paginated list of users in a group."""
+    try:
+        await init_db_connection()
+        offset = (page - 1) * per_page
+        users = await fetch_all(
+            "SELECT user_id FROM users WHERE group_id = ? LIMIT ? OFFSET ?",
+            (group_id, per_page, offset)
+        )
+        total_users = await fetch_one(
+            "SELECT COUNT(*) as count FROM users WHERE group_id = ?",
+            (group_id,)
+        )
+        total_pages = (total_users['count'] + per_page - 1) // per_page if total_users else 1
+        logger.info("Fetched paginated users: group_id=%s, page=%s, total_pages=%s", group_id, page, total_pages)
+        return users, total_pages
+    except Exception as e:
+        logger.info("GET Group Users : %s",e)
+
+
+
+async def generate_invite_links_for_all_groups(bot) -> None:
+    """Generate invite links for all groups in the database."""
+    try:
+        await init_db_connection()
+        groups = await fetch_all("SELECT group_id FROM groups")
+        for group in groups:
+            group_id = group["group_id"]
+            try:
+                invite_link = await bot.create_chat_invite_link(group_id, member_limit=None)
+                await set_group_invite_link(group_id, invite_link.invite_link)
+                logger.info("Generated invite link for group: group_id=%s, link=%s", group_id, invite_link.invite_link)
+            except Exception as e:
+                logger.error("Error generating invite link for group %s: %s", group_id, str(e), exc_info=True)
+    except Exception as e:
+        logger.error("Error generating invite links for all groups: %s", str(e), exc_info=True)
+        raise DatabaseError(f"Error generating invite links: {str(e)}", e)

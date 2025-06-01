@@ -198,6 +198,18 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
         logger.info("Processing message for active topic: group_id=%s, topic_id=%s, khatm_type=%s, user=%s, current_total=%d", 
                    group_id, topic_id, topic["khatm_type"], username, topic["current_total"])
 
+
+        if group["lock_enabled"] and not is_admin_user: 
+
+            if parse_number(raw_text) is None:
+                logger.info(f"Lock mode ON for group {group_id}. Non-numeric message '{raw_text}' from non-admin user {update.effective_user.username or update.effective_user.first_name} will be deleted.")
+                try:
+                    await update.message.delete()
+                    
+                except Exception as e_del:
+                    logger.error(f"Failed to delete non-numeric message in lock mode for group {group_id}: {e_del}")
+                return 
+            
         # Step 5: Handle awaiting states for zekr
         if context.user_data.get("awaiting_zekr"):
             logger.info("Found awaiting_zekr state: user=%s", username)

@@ -15,7 +15,9 @@ CREATE TABLE IF NOT EXISTS groups (
     time_off_end TEXT DEFAULT '',
     show_total INTEGER DEFAULT 0,
     max_display_verses INTEGER DEFAULT 10,
-    min_display_verses INTEGER DEFAULT 1
+    min_display_verses INTEGER DEFAULT 1,
+    invite_link TEXT DEFAULT '',
+    title TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS topics (
@@ -95,6 +97,15 @@ CREATE TABLE IF NOT EXISTS tag_timestamps (
     FOREIGN KEY (group_id) REFERENCES groups(group_id)
 );
 
+CREATE TABLE IF NOT EXISTS banned_groups (
+    group_id INTEGER PRIMARY KEY,
+    banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (group_id) REFERENCES groups(group_id)
+);
+CREATE TABLE IF NOT EXISTS banned_users (
+    user_id INTEGER PRIMARY KEY,
+    banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 CREATE INDEX IF NOT EXISTS idx_contributions_group_topic ON contributions(group_id, topic_id);
 CREATE INDEX IF NOT EXISTS idx_users_group_topic ON users(group_id, topic_id);
 CREATE INDEX IF NOT EXISTS idx_topics_group_topic ON topics(group_id, topic_id);

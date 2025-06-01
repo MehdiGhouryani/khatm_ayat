@@ -8,7 +8,7 @@ import re
 from telegram import constants
 from bot.utils.quran import QuranManager
 import time
-
+from bot.utils.constants import SUPER_ADMIN_IDS
 logger = logging.getLogger(__name__)
 
 def log_function_call(func):
@@ -1038,9 +1038,15 @@ async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
         chat_id = update.effective_chat.id
         logger.debug("Checking admin status: user_id=%s, chat_id=%s", user_id, chat_id)
         
+        # Check if user is a super admin
+        if user_id in SUPER_ADMIN_IDS:
+            logger.debug("User is super admin: user_id=%s", user_id)
+            return True
+        
+        # Check if user is a group admin
         admins = await context.bot.get_chat_administrators(chat_id)
         is_admin = any(admin.user.id == user_id for admin in admins)
-        logger.debug("Admin check result: user_id=%s, is_admin=%s", user_id, is_admin)
+        logger.debug("Group admin check result: user_id=%s, is_admin=%s", user_id, is_admin)
         
         return is_admin
     except Exception as e:
