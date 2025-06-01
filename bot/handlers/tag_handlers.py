@@ -207,7 +207,7 @@ class TagManager:
                         FROM members
                         WHERE is_deleted = 0 AND is_bot = 0
                     """,
-                    (chat_id,)
+                    ()
                 )
                 
                 for user_data in db_users:
