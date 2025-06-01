@@ -30,6 +30,7 @@ def log_function_call(func):
 async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle khatm-related messages for salavat, zekr, or Quran contributions."""
     try:
+        is_admin_user = await is_admin(update, context)
         logger.info("Starting handle_khatm_message: user_id=%s, chat_id=%s, message_id=%s", 
                    update.effective_user.id, update.effective_chat.id, update.message.message_id)
 
@@ -199,7 +200,7 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                    group_id, topic_id, topic["khatm_type"], username, topic["current_total"])
 
 
-        if group["lock_enabled"] and not is_admin_user:  # <--- تغییر در این خط: اضافه شدن and not is_admin_user
+        if group["lock_enabled"] and not is_admin_user:  
 
             if parse_number(raw_text) is None:
                 logger.info(f"Lock mode ON for group {group_id}. Non-numeric message '{raw_text}' from non-admin user {update.effective_user.username or update.effective_user.first_name} will be deleted.")
