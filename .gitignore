@@ -11,3 +11,4 @@ test.py
 /bot/utils/__pycache__/
 /tests/
 /bot/service/__pycache__/
+*.sqlite
