@@ -203,9 +203,9 @@ class TagManager:
                 logger.info(f"Fetching active users from members.sqlite for main group_id: {chat_id}")
                 db_users = await fetch_all(
                     """
-                    SELECT user_id, username, first_name, last_name 
-                    FROM members 
-                    WHERE group_id = ? AND is_deleted = 0 AND is_bot = 0
+                        SELECT user_id, username, first_name, last_name
+                        FROM members
+                        WHERE is_deleted = 0 AND is_bot = 0
                     """,
                     (chat_id,)
                 )
