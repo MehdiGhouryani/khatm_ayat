@@ -1,89 +1,62 @@
-import sqlite3
-import asyncio
+import aiosqlite
 import logging
 
 logger = logging.getLogger(__name__)
 
-DATABASE_PATH = "members.sqlite" # اطمینان حاصل کنید این مسیر به فایل members.sqlite شما اشاره دارد
+DATABASE_PATH = "members.sqlite"  # اطمینان حاصل کنید این مسیر به فایل members.sqlite شما اشاره دارد
 
-def _execute_query_sync(query, params, fetch_all_rows=False, fetch_one_row=False, commit_changes=False):
+async def execute(query: str, params: tuple = ()):
     """
-    یک تابع همگام (synchronous) برای اجرای کوئری‌ها در یک نخ جداگانه.
-    اتصال و نشانگر (cursor) در همین نخ ایجاد و استفاده می‌شوند.
+    یک کوئری (INSERT, UPDATE, DELETE) را روی members.sqlite به صورت ناهمگام اجرا می‌کند.
     """
-    conn = None
     try:
-        conn = sqlite3.connect(DATABASE_PATH)
-        conn.row_factory = sqlite3.Row  # برای دسترسی به ستون‌ها با نام آنها
-        cursor = conn.cursor()
-        cursor.execute(query, params)
-
-        if commit_changes:
-            conn.commit()
-            logger.debug(f"Query committed: {query} with params {params}")
-            return None  # برای دستورات INSERT, UPDATE, DELETE می‌توان ID ردیف آخر را نیز برگرداند (cursor.lastrowid)
-
-        if fetch_all_rows:
-            rows = cursor.fetchall()
-            # تبدیل ردیف‌های sqlite3.Row به دیکشنری قبل از بازگشت از نخ
-            # این کار مهم است زیرا اشیاء sqlite3.Row ممکن است محدودیت‌های نخی داشته باشند
-            result = [dict(row) for row in rows]
-            logger.debug(f"Fetched {len(result)} rows for query: {query}")
-            return result
-        
-        if fetch_one_row:
-            row = cursor.fetchone()
-            # تبدیل ردیف sqlite3.Row به دیکشنری
-            result = dict(row) if row else None
-            logger.debug(f"Fetched one row for query: {query}")
-            return result
-        
-        # اگر هیچ‌کدام از fetch_all, fetch_one یا commit_changes (که نباید رخ دهد)
-        return None
-
-    except sqlite3.Error as e: # گرفتن خطاهای خاص SQLite
-        logger.error(f"SQLite error during DB operation (query: {query}, params: {params}): {e}", exc_info=True)
+        async with aiosqlite.connect(DATABASE_PATH) as conn:
+            await conn.execute(query, params)
+            await conn.commit()
+            logger.debug(f"Successfully executed query on members.sqlite: {query} with params {params}")
+    except aiosqlite.Error as e:
+        logger.error(f"aiosqlite error executing query on members.sqlite (query: {query}, params: {params}): {e}", exc_info=True)
         raise  # خطا را برای مدیریت احتمالی در لایه بالاتر دوباره پرتاب می‌کنیم
     except Exception as e:
-        logger.error(f"Unexpected error during DB operation (query: {query}, params: {params}): {e}", exc_info=True)
-        raise
-    finally:
-        if conn:
-            conn.close()
-
-async def execute(query, params=()):
-    """
-    یک کوئری (INSERT, UPDATE, DELETE) را روی members.sqlite اجرا می‌کند.
-    """
-    try:
-        loop = asyncio.get_running_loop()
-        # پارامتر commit_changes=True برای اطمینان از commit شدن تغییرات
-        await loop.run_in_executor(None, _execute_query_sync, query, params, False, False, True)
-    except Exception as e:
-        # لاگ خطا قبلاً در _execute_query_sync انجام شده، فقط خطا را برای مدیریت احتمالی بالاتر پرتاب می‌کنیم
-        logger.error(f"Async wrapper error for execute (query: {query}): {e}", exc_info=True)
+        logger.error(f"Unexpected error executing query on members.sqlite (query: {query}, params: {params}): {e}", exc_info=True)
         raise
 
-async def fetch_all(query, params=()):
+async def fetch_all(query: str, params: tuple = ()):
     """
-    تمام ردیف‌های حاصل از یک کوئری را از members.sqlite واکشی می‌کند.
+    تمام ردیف‌های حاصل از یک کوئری را از members.sqlite به صورت ناهمگام واکشی می‌کند.
+    نتایج به صورت لیستی از دیکشنری‌ها بازگردانده می‌شوند.
     """
     try:
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, _execute_query_sync, query, params, True, False, False)
-        return result
+        async with aiosqlite.connect(DATABASE_PATH) as conn:
+            conn.row_factory = aiosqlite.Row  # برای دسترسی به ستون‌ها با نام آنها
+            async with conn.execute(query, params) as cursor:
+                rows = await cursor.fetchall()
+                result = [dict(row) for row in rows]
+                logger.debug(f"Fetched {len(result)} rows from members.sqlite for query: {query}")
+                return result
+    except aiosqlite.Error as e:
+        logger.error(f"aiosqlite error fetching all from members.sqlite (query: {query}, params: {params}): {e}", exc_info=True)
+        raise
     except Exception as e:
-        logger.error(f"Async wrapper error for fetch_all (query: {query}): {e}", exc_info=True)
+        logger.error(f"Unexpected error fetching all from members.sqlite (query: {query}, params: {params}): {e}", exc_info=True)
         raise
 
-async def fetch_one(query, params=()):
+async def fetch_one(query: str, params: tuple = ()):
     """
-    یک ردیف حاصل از یک کوئری را از members.sqlite واکشی می‌کند.
+    یک ردیف حاصل از یک کوئری را از members.sqlite به صورت ناهمگام واکشی می‌کند.
+    نتیجه به صورت یک دیکشنری یا None (اگر ردیفی یافت نشود) بازگردانده می‌شود.
     """
     try:
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, _execute_query_sync, query, params, False, True, False)
-        return result
+        async with aiosqlite.connect(DATABASE_PATH) as conn:
+            conn.row_factory = aiosqlite.Row  # برای دسترسی به ستون‌ها با نام آنها
+            async with conn.execute(query, params) as cursor:
+                row = await cursor.fetchone()
+                result = dict(row) if row else None
+                logger.debug(f"Fetched one row from members.sqlite for query: {query}")
+                return result
+    except aiosqlite.Error as e:
+        logger.error(f"aiosqlite error fetching one from members.sqlite (query: {query}, params: {params}): {e}", exc_info=True)
+        raise
     except Exception as e:
-        logger.error(f"Async wrapper error for fetch_one (query: {query}): {e}", exc_info=True)
+        logger.error(f"Unexpected error fetching one from members.sqlite (query: {query}, params: {params}): {e}", exc_info=True)
         raise
