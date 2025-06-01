@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # تنظیمات
 TAG_COOLDOWN_HOURS = 1  # کول‌داون 1 ساعته
 USERS_PER_MESSAGE = 100  # حداکثر 100 کاربر در هر پیام
-TAG_MESSAGE_DELAY = 1.5  # تأخیر 1.5 ثانیه بین پیام‌ها
+TAG_MESSAGE_DELAY = 0.2  # تأخیر 1.5 ثانیه بین پیام‌ها
 MAX_MESSAGE_LENGTH = 4096  # حداکثر طول پیام تلگرام
 
 class TagManager:
@@ -99,9 +99,10 @@ class TagManager:
                     
                 try:
                     # اضافه کردن شماره بخش برای زیبایی
-                    header = f"📋 بخش {i+1} از {len(messages)}\n\n"
-                    full_message = header + message_text
-                    await update.message.reply_text(
+                    # header = f"📋 بخش {i+1} از {len(messages)}\n\n"
+                    full_message = message_text
+                    await context.bot.send_message(
+                        chat_id=chat.id,
                         text=full_message,
                         parse_mode=ParseMode.MARKDOWN_V2,
                         disable_web_page_preview=True,
