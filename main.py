@@ -2,23 +2,25 @@ import asyncio
 import logging
 import backoff
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ConversationHandler, ChatMemberHandler
-from telegram import Update
+from telegram import Update, ChatMember
 from telegram.ext import ContextTypes
-from bot.handlers.admin_handlers import start, stop, topic, khatm_selection, set_zekr_text, help_command, set_range, start_khatm_zekr, start_khatm_salavat, start_khatm_ghoran, set_khatm_target_number, TEXT_COMMANDS,set_completion_count
+from bot.handlers.admin_handlers import start, stop, topic, khatm_selection, set_zekr_text, help_command, set_range, start_khatm_zekr, start_khatm_salavat, start_khatm_ghoran, set_khatm_target_number, TEXT_COMMANDS, set_completion_count
 from bot.handlers.khatm_handlers import handle_khatm_message, subtract_khatm, start_from, khatm_status
 from bot.handlers.settings_handlers import reset_zekr, reset_kol, stop_on, stop_on_off, set_max, max_off, set_min, min_off, sepas_on, sepas_off, add_sepas, number_off, time_off, time_off_disable, lock_on, lock_off, jam_off, jam_on, set_completion_message, reset_daily, reset_off, reset_number_on, reset_number_off, delete_after, delete_off, reset_daily_groups, reset_periodic_topics, handle_new_message, max_ayat, min_ayat
 from bot.handlers.stats_handlers import show_total_stats, show_ranking
 from bot.handlers.hadith_handlers import hadis_on, hadis_off, send_daily_hadith
 from bot.handlers.tag_handlers import setup_handlers, TagManager
-from bot.handlers.user_handlers import chat_member_handler, message_handler as user_message_handler
+from bot.handlers.user_handlers import chat_member_handler as user_chat_member_handler, message_handler as user_message_handler
 from bot.handlers.error_handlers import error_handler
-from bot.database.db import init_db, process_queue_request, execute, write_queue, close_db_connection,is_group_banned,set_group_invite_link,fetch_one,generate_invite_links_for_all_groups,fetch_all
-from bot.utils.constants import DEFAULT_SEPAS_TEXTS, DAILY_HADITH_TIME, DAILY_RESET_TIME, DAILY_PERIOD_RESET_TIME,MONITOR_CHANNEL_ID
+from bot.database.db import init_db, process_queue_request, execute, write_queue, close_db_connection, is_group_banned, set_group_invite_link, fetch_one, generate_invite_links_for_all_groups, fetch_all
+from bot.database.members_db import execute as members_execute
+from bot.utils.constants import DEFAULT_SEPAS_TEXTS, DAILY_HADITH_TIME, DAILY_RESET_TIME, DAILY_PERIOD_RESET_TIME, MONITOR_CHANNEL_ID, MAIN_GROUP_ID
 from config.settings import TELEGRAM_TOKEN
 from bot.utils.logging_config import setup_logging
 from bot.utils.helpers import ignore_old_messages
 from bot.handlers.dashboard import setup_dashboard_handlers
 from datetime import time
+import time as time_module
 
 logger = logging.getLogger(__name__)
 logging.getLogger("apscheduler").setLevel(logging.WARNING)
@@ -79,7 +81,7 @@ def map_handlers():
         "subtract_khatm": subtract_khatm,
         "start_from": start_from,
         "khatm_status": khatm_status,
-        "set_completion_count": set_completion_count, 
+        "set_completion_count": set_completion_count,
         "tag_command": lambda update, context: TagManager(context).tag_command(update, context),
         "cancel_tag": lambda update, context: TagManager(context).cancel_tag(update, context),
     }
@@ -89,25 +91,57 @@ def map_handlers():
             info["handler"] = handler_map[handler_name]
         else:
             raise ValueError(f"Handler {handler_name} not found for command {cmd}")
+
 async def chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         chat_member = update.chat_member
-        if chat_member.new_chat_member.user.id == context.bot.id:
-            # بررسی اگر بات به گروه اضافه شده یا ادمین است
+        chat_id = update.effective_chat.id
+        user = chat_member.new_chat_member.user
+        user_id = user.id
+
+        # Handle bot being added to the group
+        if user_id == context.bot.id:
             if chat_member.new_chat_member.status in ["member", "administrator"]:
-                chat_id = update.effective_chat.id
-                try:
-                    # بررسی وجود گروه در دیتابیس
-                    group_exists = await fetch_one("SELECT group_id FROM groups WHERE group_id = ?", (chat_id,))
-                    if not group_exists:
-                        await execute("INSERT OR IGNORE INTO groups (group_id, is_active) VALUES (?, 1)", (chat_id,))
-                    
-                    # ایجاد لینک دعوت
-                    invite_link = await context.bot.create_chat_invite_link(chat_id, member_limit=None)
-                    await set_group_invite_link(chat_id, invite_link.invite_link)
-                    logger.info("Auto-set invite link for group: chat_id=%s, link=%s", chat_id, invite_link.invite_link)
-                except Exception as e:
-                    logger.error("Error creating invite link for group %s: %s", chat_id, str(e), exc_info=True)
+                group_exists = await fetch_one("SELECT group_id FROM groups WHERE group_id = ?", (chat_id,))
+                if not group_exists:
+                    await execute("INSERT OR IGNORE INTO groups (group_id, is_active) VALUES (?, 1)", (chat_id,))
+                invite_link = await context.bot.create_chat_invite_link(chat_id, member_limit=None)
+                await set_group_invite_link(chat_id, invite_link.invite_link)
+                logger.info("Auto-set invite link for group: chat_id=%s, link=%s", chat_id, invite_link.invite_link)
+            return
+
+        # Handle user join/leave only for main group
+        if chat_id == MAIN_GROUP_ID:
+            status = chat_member.new_chat_member.status
+            current_timestamp = int(time_module.time())
+            if status in ["member", "administrator", "creator"]:
+                # User joined or is active
+                username = user.username or None
+                first_name = user.first_name or "User"
+                last_name = user.last_name or None
+                is_bot = 1 if user.is_bot else 0
+                await members_execute(
+                    """
+                    INSERT OR REPLACE INTO members (
+                        user_id, group_id, username, first_name, last_name, 
+                        is_bot, is_deleted, scraped_timestamp
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+                    """,
+                    (user_id, chat_id, username, first_name, last_name, is_bot, current_timestamp)
+                )
+                logger.info("User %s (%s) added/updated as active in main group %s", user_id, username or first_name, chat_id)
+            elif status in ["left", "kicked"]:
+                # User left or was removed
+                await members_execute(
+                    """
+                    UPDATE members 
+                    SET is_deleted = 1, scraped_timestamp = ? 
+                    WHERE user_id = ? AND group_id = ?
+                    """,
+                    (current_timestamp, user_id, chat_id)
+                )
+                logger.info("User %s marked as deleted in main group %s", user_id, chat_id)
     except Exception as e:
         logger.error("Error in chat_member_handler: %s", str(e), exc_info=True)
 
@@ -117,10 +151,8 @@ async def refresh_invite_links(context: ContextTypes.DEFAULT_TYPE):
         for group in groups:
             group_id = group["group_id"]
             try:
-                # بررسی وضعیت لینک
                 chat = await context.bot.get_chat(group_id)
                 if group["invite_link"]:
-                    # اگر لینک منقضی شده یا نامعتبر است، لینک جدید ایجاد کنید
                     try:
                         await context.bot.get_chat_invite_link(group_id, group["invite_link"])
                     except Exception:
@@ -140,12 +172,10 @@ async def handle_new_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
         user_id = update.effective_user.id
         logger.debug("Handling new message: chat_id=%s, user_id=%s", chat_id, user_id)
 
-        # Check if group is banned
         if await is_group_banned(chat_id):
             logger.debug("Ignoring message from banned group: chat_id=%s", chat_id)
             return
 
-        # Forward message to monitoring channel
         try:
             await context.bot.forward_message(
                 chat_id=MONITOR_CHANNEL_ID,
@@ -155,13 +185,8 @@ async def handle_new_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
             logger.info("Message forwarded to monitoring channel: chat_id=%s, message_id=%s", chat_id, message.message_id)
         except Exception as e:
             logger.error("Error forwarding message to monitoring channel: %s", str(e), exc_info=True)
-
-        # Continue with existing logic
-        # (Keep the rest of the original handle_new_message logic here)
-        # For brevity, assuming the rest remains unchanged
     except Exception as e:
         logger.error("Error handling new message: %s", str(e), exc_info=True)
-
 
 @ignore_old_messages()
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -180,8 +205,6 @@ async def initialize_app():
     await init_db()
     for text in DEFAULT_SEPAS_TEXTS:
         await execute("INSERT OR IGNORE INTO sepas_texts (text, is_default, group_id) VALUES (?, 1, NULL)", (text,))
-
-    
 
 def register_handlers(app: Application):
     conv_handler = ConversationHandler(
@@ -237,7 +260,7 @@ def register_handlers(app: Application):
         CommandHandler("set_completion_message", set_completion_message),
         CommandHandler("khatm_status", khatm_status),
         CommandHandler("subtract", subtract_khatm),
-        CommandHandler("set_completion_count", set_completion_count), 
+        CommandHandler("set_completion_count", set_completion_count),
     ] + setup_handlers() + setup_dashboard_handlers()
     app.add_handler(conv_handler)
     for handler in command_handlers:
@@ -257,9 +280,8 @@ def register_handlers(app: Application):
         start_from
     ))
     
-    # افزودن هندلرهای جدید برای مدیریت کاربران
     app.add_handler(ChatMemberHandler(chat_member_handler, ChatMemberHandler.CHAT_MEMBER))
-    app.add_handler(MessageHandler(filters.ALL, user_message_handler), group=999)  # اولویت پایین
+    app.add_handler(MessageHandler(filters.ALL, user_message_handler), group=999)
 
     app.add_handler(MessageHandler(filters.COMMAND, ignore_command))
     app.add_error_handler(error_handler)
