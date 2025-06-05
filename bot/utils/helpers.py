@@ -299,12 +299,24 @@ async def reply_text_and_schedule_deletion(
     """Sends a reply message and schedules its deletion if configured for the group."""
 
     sent_message = None
+    msg_thread_id: Optional[int] = None 
+
+
+    # دریافت message_thread_id از پیام اصلی کاربر
+    if update.message and update.message.message_thread_id: #
+        msg_thread_id = update.message.message_thread_id #
+
+    if 'message_thread_id' in kwargs and kwargs['message_thread_id'] is not None:
+         msg_thread_id = kwargs['message_thread_id']
+
+
     try:
         if reply_parameters:
             # ارسال پیام به گروه فعلی، اما با Reply به پیام مشخص شده از کانال دیگر
             sent_message = await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text=text,
+                message_thread_id=msg_thread_id,  
                 reply_parameters=reply_parameters,
                 disable_web_page_preview=True,
                 **kwargs  # شامل parse_mode
@@ -316,7 +328,6 @@ async def reply_text_and_schedule_deletion(
                 disable_web_page_preview=True,
                 **kwargs
             )
-
         if sent_message and update.effective_chat:
             await schedule_message_deletion(context, update.effective_chat.id, sent_message.message_id)
         return sent_message
@@ -325,18 +336,35 @@ async def reply_text_and_schedule_deletion(
         # Attempt to send a generic error message if the original reply failed, and schedule IT for deletion
         if update.effective_chat:
             try:
-                error_reply = await update.message.reply_text("خطایی در ارسال پیام رخ داد.")
+                error_reply = await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text="خطایی در ارسال پیام رخ داد.",
+                    message_thread_id=msg_thread_id # <--- اضافه شد
+                )
                 if error_reply:
                     await schedule_message_deletion(context, update.effective_chat.id, error_reply.message_id)
             except Exception as e_reply:
                 logger.error(f"Error sending generic error reply: {e_reply}", exc_info=True)
         return sent_message # Return original sent_message which might be None
 
-async def send_message_and_schedule_deletion(context: "ContextTypes.DEFAULT_TYPE", chat_id: int, text: str, **kwargs) -> "Optional[Message]":
+async def send_message_and_schedule_deletion(
+    context: "ContextTypes.DEFAULT_TYPE",
+    chat_id: int,
+    text: str,
+    message_thread_id: Optional[int] = None,  
+    **kwargs
+) -> "Optional[Message]":
+    
     """Sends a message and schedules its deletion if configured for the group."""
+
     sent_message = None
     try:
-        sent_message = await context.bot.send_message(chat_id, text, **kwargs)
+        sent_message = await context.bot.send_message(
+            chat_id,
+            text,
+            message_thread_id=message_thread_id,  # <--- تغییر کلیدی: اضافه شد
+            **kwargs
+        )
         if sent_message:
             await schedule_message_deletion(context, chat_id, sent_message.message_id)
         return sent_message
@@ -344,7 +372,11 @@ async def send_message_and_schedule_deletion(context: "ContextTypes.DEFAULT_TYPE
         logger.error(f"Error in send_message_and_schedule_deletion for chat {chat_id}: {e}", exc_info=True)
         # Attempt to send a generic error message to the chat if the original send failed
         try:
-            error_reply = await context.bot.send_message(chat_id, "خطایی در ارسال پیام رخ داد.")
+            error_reply = await context.bot.send_message(
+                chat_id, 
+                "خطایی در ارسال پیام رخ داد.",
+                message_thread_id=message_thread_id # <--- اضافه شد
+            )
             if error_reply:
                 await schedule_message_deletion(context, chat_id, error_reply.message_id)
         except Exception as e_reply:
