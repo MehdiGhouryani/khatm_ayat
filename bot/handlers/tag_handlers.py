@@ -37,7 +37,20 @@ class TagManager:
         chat = update.effective_chat
         user = update.effective_user
         message_thread_id = update.message.message_thread_id if getattr(chat, 'is_forum', False) else None
+        if update.message.reply_to_message:
+            reply_to_target_message_id = update.message.reply_to_message.message_id
+            logger.info(
+                "Command /tag in chat %s is a reply to message %s. Tags will reply to this message.",
+                chat.id, reply_to_target_message_id
+            )
+        else:
+            logger.info(
+                "Command /tag in chat %s (thread: %s) is not a reply. Tags will be sent directly or to command's thread.",
+                chat.id,message_thread_id
+            )
+
         logger.info("Received /tag command in chat %s (thread: %s) from user %s", chat.id, message_thread_id, user.id)
+
 
         # بررسی نوع چت
         if chat.type not in ["group", "supergroup"]:
@@ -98,25 +111,31 @@ class TagManager:
                     return
                     
                 try:
-                    # اضافه کردن شماره بخش برای زیبایی
-                    # header = f"📋 بخش {i+1} از {len(messages)}\n\n"
-                    full_message = message_text
-                    await context.bot.send_message(
-                        chat_id=chat.id,
-                        text=full_message,
-                        parse_mode=ParseMode.MARKDOWN_V2,
-                        disable_web_page_preview=True,
-                        message_thread_id=message_thread_id
-                    )
-                    sent_messages += 1
-                    await asyncio.sleep(TAG_MESSAGE_DELAY)
+                    header = f"شما برای دیدن محتوای ریپلای شده تگ شده اید لطفا این را ببینید 👆\n➖➖➖➖➖➖➖➖➖➖\n" #
+                    full_message = header + message_text #
+                    
+                    send_params = {
+                        'chat_id': chat.id, #
+                        'text': full_message, #
+                        'parse_mode': ParseMode.MARKDOWN_V2, #
+                        'disable_web_page_preview': True #
+                    }
+                    if reply_to_target_message_id:
+                        send_params['reply_to_message_id'] = reply_to_target_message_id
+                    # اگر به پیام خاصی ریپلای نمی‌شود و دستور در یک تاپیک بوده، تگ‌ها به آن تاپیک ارسال می‌شوند
+                    elif message_thread_id: 
+                        send_params['message_thread_id'] = message_thread_id #
+                    
+                    await context.bot.send_message(**send_params) #
+                    sent_messages += 1 #
+                    await asyncio.sleep(TAG_MESSAGE_DELAY) #
                 except Exception as e:
-                    logger.error("Error sending tag message %d: %s", i+1, str(e))
+                    logger.error("Error sending tag message %d: %s", i+1, str(e)) #
             
-            context.chat_data["last_tag_time"] = datetime.utcnow().isoformat()
+            context.chat_data["last_tag_time"] = datetime.utcnow().isoformat() #
             logger.info("Tag operation completed for chat %s: sent %d messages in %.2f seconds", 
                         chat.id, sent_messages, time.time() - start_time)
-            
+                        
         except Exception as e:
             logger.error("Error during tagging in chat %s: %s", chat.id, e, exc_info=True)
             await self._safe_send_message(

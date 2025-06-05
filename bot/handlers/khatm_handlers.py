@@ -3,7 +3,8 @@ import datetime
 import logging
 from datetime import timezone
 from pytz import timezone
-from telegram import Update,constants
+from telegram import Update,constants, ReplyParameters
+from typing import List, Optional
 from telegram.ext import ContextTypes
 from telegram.error import TimedOut
 from bot.database.db import fetch_one,write_queue
@@ -441,32 +442,48 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
             new_total_for_display += displayed_amount
         else:
             new_total_for_display += number
-
-        message = await format_khatm_message(
+        formatted_data = await format_khatm_message(
             khatm_type=topic["khatm_type"],
             previous_total=current_topic_total_before_contribution,
-            amount=number, # User's actual input number (e.g., 60)
-            new_total=new_total_for_display, # New total reflecting topic progress
+            amount=number,
+            new_total=new_total_for_display,
             sepas_text=sepas_text,
             group_id=group_id,
             zekr_text=topic["zekr_text"],
             verses=verses_for_display,
-            max_display_verses=group["max_display_verses"], # Pass the setting to formatter
-            completion_count=topic["completion_count"] # Pass current completion_count
+            max_display_verses=group["max_display_verses"],
+            completion_count=topic["completion_count"]
         )
-        logger.debug("Formatted khatm message for user")
+        logger.debug("Formatted khatm message for user - expecting tuple now")
 
+        messages_to_send: List[str]
+        persian_audio_reply_params: Optional[ReplyParameters] = None
+
+        if isinstance(formatted_data, tuple) and len(formatted_data) == 2:
+            messages_to_send, persian_audio_reply_params = formatted_data
+        elif isinstance(formatted_data, list):
+            messages_to_send = formatted_data
+        else:
+            logger.error(f"Unexpected output from format_khatm_message: {type(formatted_data)}. Expected Tuple or List.")
+            messages_to_send = ["خطا در پردازش پیام ختم. لطفاً به ادمین اطلاع دهید."]
+            
         try:
-            # message can be a string or a list of strings
-            if isinstance(message, list):
-                for idx, msg_part in enumerate(message):
-                    await reply_text_and_schedule_deletion(update, context, msg_part, parse_mode=ParseMode.HTML)
-                    if idx < len(message) - 1:
-                        # Slight delay between messages
-                        await asyncio.sleep(0.5)
-            else:
-                # For backward compatibility
-                await reply_text_and_schedule_deletion(update, context, message, parse_mode=ParseMode.HTML)
+            for idx, msg_part in enumerate(messages_to_send):
+                current_reply_params_for_this_part: Optional[ReplyParameters] = None
+                
+                if idx == 0 and topic["khatm_type"] == "ghoran" and persian_audio_reply_params:
+                    current_reply_params_for_this_part = persian_audio_reply_params
+
+                await reply_text_and_schedule_deletion(
+                    update,
+                    context,
+                    msg_part,
+                    reply_parameters=current_reply_params_for_this_part,
+                    parse_mode=ParseMode.HTML
+                )
+                if idx < len(messages_to_send) - 1:
+                    await asyncio.sleep(0.5)
+            
             logger.info("Sent contribution confirmation message: group_id=%s, topic_id=%s, user=%s", 
                       group_id, topic_id, username)
         except TimedOut:
@@ -475,25 +492,43 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 group_id, topic_id
             )
             await asyncio.sleep(2)
-            # Retry sending the first or only message
-            first_msg = message[0] if isinstance(message, list) else message
-            await reply_text_and_schedule_deletion(update, context, first_msg, parse_mode=ParseMode.HTML)
             
-            # If there are more messages, attempt to send them
-            if isinstance(message, list) and len(message) > 1:
-                for idx, msg_part in enumerate(message[1:], 1):
+            first_msg_text = ""
+            reply_params_for_retry: Optional[ReplyParameters] = None
+
+            if messages_to_send: # Ensure messages_to_send is not empty
+                first_msg_text = messages_to_send[0]
+                if topic["khatm_type"] == "ghoran" and persian_audio_reply_params:
+                     reply_params_for_retry = persian_audio_reply_params
+            
+            if first_msg_text: # Ensure there is a message to send
+                await reply_text_and_schedule_deletion(
+                    update, 
+                    context, 
+                    first_msg_text, 
+                    reply_parameters=reply_params_for_retry,
+                    parse_mode=ParseMode.HTML
+                )
+            
+            if len(messages_to_send) > 1:
+                for idx_retry, msg_part_retry in enumerate(messages_to_send[1:], 1):
                     try:
-                        await reply_text_and_schedule_deletion(update, context, msg_part, parse_mode=ParseMode.HTML)
+                        await reply_text_and_schedule_deletion(
+                            update, 
+                            context, 
+                            msg_part_retry, 
+                            parse_mode=ParseMode.HTML
+                        )
                         await asyncio.sleep(0.5)
                     except TimedOut:
-                        logger.warning("Timed out sending message part %d for group_id=%s, topic_id=%s",
-                                     idx, group_id, topic_id)
-            logger.info("Sent contribution confirmation message after retry: group_id=%s, topic_id=%s, user=%s", 
+                        logger.warning("Timed out sending message part %d during retry for group_id=%s, topic_id=%s",
+                                     idx_retry, group_id, topic_id) # Original idx was based on the full list, this is now based on the remainder
+            logger.info("Attempted to send contribution confirmation message after initial timeout: group_id=%s, topic_id=%s, user=%s", 
                       group_id, topic_id, username)
 
     except TimedOut:
         logger.error(
-            "Timed out error in handle_khatm_message: group_id=%s, topic_id=%s, user_id=%s, username=%s",
+            "Outer Timed out error in handle_khatm_message: group_id=%s, topic_id=%s, user_id=%s, username=%s",
             group_id, topic_id, update.effective_user.id, update.effective_user.username or update.effective_user.first_name,
             exc_info=True
         )
@@ -512,8 +547,7 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
             logger.warning(
                 "Timed out sending error message for group_id=%s, topic_id=%s",
                 group_id, topic_id
-            )
-            
+            )            
 @ignore_old_messages()
 @log_function_call
 async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):

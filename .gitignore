@@ -12,3 +12,4 @@ test.py
 /tests/
 /bot/service/__pycache__/
 *.sqlite
+quran-past.json
