@@ -119,3 +119,6 @@ BEGIN
     UPDATE topics SET updated_at = CURRENT_TIMESTAMP
     WHERE group_id = OLD.group_id AND topic_id = OLD.topic_id;
 END;
+
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_default_sepas ON sepas_texts(text) WHERE is_default = 1;

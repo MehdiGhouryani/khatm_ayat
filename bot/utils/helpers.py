@@ -453,19 +453,40 @@ async def generate_audio_links_section(
     
     return "➖➖➖➖➖➖➖➖➖➖\n" + audio_line
 
+
+
+
 def parse_number(text):
     try:
-        text = text.strip().replace("٫", ".").replace(",", "")
+        # حذف فاصله‌های اضافی و ویرگول
+        text = text.strip().replace(",", "")
+
+        # تبدیل اعداد فارسی به انگلیسی
         persian_digits = "۰۱۲۳۴۵۶۷۸۹"
         english_digits = "0123456789"
         for p, e in zip(persian_digits, english_digits):
             text = text.replace(p, e)
-        number = float(text)
-        if number.is_integer():
-            number = int(number)
-        return number
+
+        # تلاش برای تبدیل مستقیم به عدد صحیح (integer)
+        # این بخش در صورت وجود نقطه اعشار با خطا مواجه می‌شود
+        return int(text)
+
     except (ValueError, TypeError):
+        # اگر متن قابل تبدیل به عدد صحیح نباشد، None برمی‌گرداند
         return None
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 async def get_random_sepas(group_id):
     try:

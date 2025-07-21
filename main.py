@@ -2,7 +2,7 @@ import asyncio
 import logging
 import backoff
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ConversationHandler, ChatMemberHandler
-from telegram import Update, ChatMember
+from telegram import Update,InlineKeyboardButton,InlineKeyboardMarkup,ChatMember
 from telegram.ext import ContextTypes
 from bot.handlers.admin_handlers import start, stop, topic, khatm_selection, set_zekr_text, help_command, set_range, start_khatm_zekr, start_khatm_salavat, start_khatm_ghoran, set_khatm_target_number, TEXT_COMMANDS, set_completion_count
 from bot.handlers.khatm_handlers import handle_khatm_message, subtract_khatm, start_from, khatm_status
@@ -91,27 +91,76 @@ def map_handlers():
             info["handler"] = handler_map[handler_name]
         else:
             raise ValueError(f"Handler {handler_name} not found for command {cmd}")
-
 async def chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         chat_member = update.chat_member
-        chat_id = update.effective_chat.id
-        user = chat_member.new_chat_member.user
-        user_id = user.id
-
-        # Handle bot being added to the group
-        if user_id == context.bot.id:
-            if chat_member.new_chat_member.status in ["member", "administrator"]:
-                group_exists = await fetch_one("SELECT group_id FROM groups WHERE group_id = ?", (chat_id,))
-                if not group_exists:
-                    await execute("INSERT OR IGNORE INTO groups (group_id, is_active) VALUES (?, 1)", (chat_id,))
-                invite_link = await context.bot.create_chat_invite_link(chat_id, member_limit=None)
-                await set_group_invite_link(chat_id, invite_link.invite_link)
-                logger.info("Auto-set invite link for group: chat_id=%s, link=%s", chat_id, invite_link.invite_link)
+        if not chat_member:
             return
 
-        # Handle user join/leave only for main group
-        if chat_id == MAIN_GROUP_ID:
+        chat = update.effective_chat
+        user = chat_member.new_chat_member.user
+        user_id = user.id
+        # --- شروع منطق جدید برای ربات ---
+        if user.id == context.bot.id:
+            old_status = chat_member.old_chat_member.status
+            new_status = chat_member.new_chat_member.status
+
+            # ۱. زمانی که ربات به عنوان عضو عادی اضافه می‌شود
+            if new_status == ChatMember.MEMBER and old_status != ChatMember.MEMBER:
+                await context.bot.send_message(
+                    chat_id=chat.id,
+                    text="از اینکه من را به گروه دعوت کردید سپاسگزارم. 🤖\nبرای عملکرد کامل، لطفاً ربات را به عنوان ادمین گروه انتخاب کنید."
+                )
+                logger.info(f"Bot was added as a member to group {chat.id}. Sent admin request message.")
+                return
+
+            # ۲. زمانی که ربات به ادمین ارتقا پیدا می‌کند
+            if new_status == ChatMember.ADMINISTRATOR and old_status == ChatMember.MEMBER:
+                logger.info(f"Bot was promoted to admin in group {chat.id}.")
+
+                # ثبت گروه در دیتابیس و ایجاد لینک دعوت (منطق قبلی)
+                group_exists = await fetch_one("SELECT group_id FROM groups WHERE group_id = ?", (chat.id,))
+                if not group_exists:
+                    await execute("INSERT OR IGNORE INTO groups (group_id, is_active) VALUES (?, 1)", (chat.id,))
+
+                try:
+                    invite_link = await context.bot.create_chat_invite_link(chat.id)
+                    await set_group_invite_link(chat.id, invite_link.invite_link)
+                    logger.info(f"Auto-set invite link for group: chat_id={chat.id}")
+                except Exception as e:
+                    logger.error(f"Failed to create invite link for group {chat.id} after promotion: {e}")
+
+                # بررسی تاپیک‌دار بودن گروه
+                full_chat = await context.bot.get_chat(chat.id)
+                if full_chat.is_forum:
+                    # پیام برای گروه‌های تاپیک‌دار
+                    await context.bot.send_message(
+                        chat_id=chat.id,
+                        text="✅ ربات با موفقیت ادمین شد.\n\n"
+                             "این گروه <b>تاپیک‌دار</b> است. برای راه‌اندازی ختم در هر تاپیک، لطفاً وارد تاپیک مورد نظر شده و از دستور /topic یا 'تاپیک' استفاده کنید.",
+                        parse_mode='HTML'
+                    )
+                else:
+                    # نمایش دکمه برای گروه‌های عادی
+                    keyboard = [
+                        [
+                            InlineKeyboardButton("صلوات 🙏", callback_data="khatm_salavat"),
+                            InlineKeyboardButton("قرآن 📖", callback_data="khatm_ghoran"),
+                            InlineKeyboardButton("ذکر 📿", callback_data="khatm_zekr"),
+                        ]
+                    ]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    await context.bot.send_message(
+                        chat_id=chat.id,
+                        text="✅ ربات با موفقیت ادمین شد!\n\n"
+                             "برای شروع، لطفاً نوع ختم اصلی گروه را از دکمه‌های زیر انتخاب کنید:",
+                        reply_markup=reply_markup
+                    )
+            return
+        # --- پایان منطق جدید برای ربات ---
+
+        # منطق قبلی برای مدیریت ورود و خروج کاربران در گروه اصلی، بدون تغییر باقی می‌ماند
+        if chat.id == MAIN_GROUP_ID:
             status = chat_member.new_chat_member.status
             current_timestamp = int(time_module.time())
             if status in ["member", "administrator", "creator"]:
@@ -123,25 +172,25 @@ async def chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
                 await members_execute(
                     """
                     INSERT OR REPLACE INTO members (
-                        user_id, group_id, username, first_name, last_name, 
+                        user_id, group_id, username, first_name, last_name,
                         is_bot, is_deleted, scraped_timestamp
                     )
                     VALUES (?, ?, ?, ?, ?, ?, 0, ?)
                     """,
-                    (user_id, chat_id, username, first_name, last_name, is_bot, current_timestamp)
+                    (user_id, chat.id, username, first_name, last_name, is_bot, current_timestamp)
                 )
-                logger.info("User %s (%s) added/updated as active in main group %s", user_id, username or first_name, chat_id)
+                logger.info("User %s (%s) added/updated as active in main group %s", user.id, username or first_name, chat.id)
             elif status in ["left", "kicked"]:
                 # User left or was removed
                 await members_execute(
                     """
-                    UPDATE members 
-                    SET is_deleted = 1, scraped_timestamp = ? 
+                    UPDATE members
+                    SET is_deleted = 1, scraped_timestamp = ?
                     WHERE user_id = ? AND group_id = ?
                     """,
-                    (current_timestamp, user_id, chat_id)
+                    (current_timestamp, user.id, chat.id)
                 )
-                logger.info("User %s marked as deleted in main group %s", user_id, chat_id)
+                logger.info("User %s marked as deleted in main group %s", user.id, chat.id)
     except Exception as e:
         logger.error("Error in chat_member_handler: %s", str(e), exc_info=True)
 
@@ -203,9 +252,24 @@ async def initialize_app():
     if not TELEGRAM_TOKEN:
         raise ValueError("TELEGRAM_TOKEN is required")
     await init_db()
-    for text in DEFAULT_SEPAS_TEXTS:
-        await execute("INSERT OR IGNORE INTO sepas_texts (text, is_default, group_id) VALUES (?, 1, NULL)", (text,))
 
+    # ایمپورت کردن خطای مورد نیاز از کتابخانه دیتابیس
+    import aiosqlite
+
+    for text in DEFAULT_SEPAS_TEXTS:
+        try:
+            # تلاش برای درج متن (بدون OR IGNORE)
+            await execute(
+                "INSERT INTO sepas_texts (text, is_default, group_id) VALUES (?, 1, NULL)",
+                (text,)
+            )
+        except aiosqlite.IntegrityError:
+            # اگر متن از قبل وجود داشته باشد، دیتابیس خطای IntegrityError می‌دهد
+            # و ما به سادگی از آن چشم‌پوشی می‌کنیم و به سراغ متن بعدی می‌رویم.
+            pass
+
+
+        
 def register_handlers(app: Application):
     conv_handler = ConversationHandler(
         entry_points=[
