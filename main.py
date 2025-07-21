@@ -251,11 +251,39 @@ async def ignore_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def initialize_app():
     if not TELEGRAM_TOKEN:
         raise ValueError("TELEGRAM_TOKEN is required")
+
+    # --- شروع بخش پاک‌سازی یک‌باره ---
+    # این کد فقط برای پاک کردن دیتابیس فعلی شما از رکوردهای تکراری است.
+    logger.info("Attempting to clean up duplicate default sepas texts...")
+    try:
+        # ایمپورت موارد لازم در همینجا
+        from bot.database.db import execute, init_db_connection
+        # ابتدا فقط به دیتابیس متصل می‌شویم
+        await init_db_connection()
+
+        # اجرای دستور حذف رکوردهای تکراری (فقط برای متن‌های پیش‌فرض)
+        await execute(
+            """
+            DELETE FROM sepas_texts
+            WHERE is_default = 1 AND rowid NOT IN (
+                SELECT MIN(rowid)
+                FROM sepas_texts
+                WHERE is_default = 1
+                GROUP BY text
+            )
+            """
+        )
+        logger.info("Database cleanup successful. Duplicate default texts removed.")
+
+    except Exception as e:
+        logger.error(f"An error occurred during the one-time cleanup, but we will proceed: {e}")
+    # --- پایان بخش پاک‌سازی ---
+
+    # حالا schema را روی دیتابیس تمیز شده اجرا می‌کنیم
     await init_db()
 
-    # ایمپورت کردن خطای مورد نیاز از کتابخانه دیتابیس
+    # ادامه کد اصلی تابع (بدون تغییر)
     import aiosqlite
-
     for text in DEFAULT_SEPAS_TEXTS:
         try:
             # تلاش برای درج متن (بدون OR IGNORE)
@@ -264,10 +292,8 @@ async def initialize_app():
                 (text,)
             )
         except aiosqlite.IntegrityError:
-            # اگر متن از قبل وجود داشته باشد، دیتابیس خطای IntegrityError می‌دهد
-            # و ما به سادگی از آن چشم‌پوشی می‌کنیم و به سراغ متن بعدی می‌رویم.
+            # اگر متن از قبل وجود داشته باشد، خطا می‌دهد و ما رد می‌شویم
             pass
-
 
         
 def register_handlers(app: Application):
