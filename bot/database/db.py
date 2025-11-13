@@ -604,6 +604,21 @@ async def handle_set_min(cursor, request):
     logger.info("Processed set_min for group_id=%s, topic_id=%s, min_number=%d", 
                 request["group_id"], request["topic_id"], request["min_number"])
 
+
+async def handle_set_completion_count(cursor, request):
+    """Handle setting the completion count for a topic."""
+    await cursor.execute(
+        """
+        UPDATE topics 
+        SET completion_count = ?
+        WHERE group_id = ? AND topic_id = ?
+        """,
+        (request["count"], request["group_id"], request["topic_id"])
+    )
+    logger.info("Processed set_completion_count for group_id=%s, topic_id=%s, count=%d", 
+                request["group_id"], request["topic_id"], request["count"])
+
+
 async def handle_min_off(cursor, request):
     await cursor.execute(
         """
@@ -979,7 +994,9 @@ async def process_queue_request(request: Dict[str, Any]) -> None:
         "min_ayat": handle_min_ayat,
         "khatm_number": handle_khatm_number,
         "update_tag_timestamp": handle_update_tag_timestamp,
-        "set_zekr_text": handle_set_zekr_text
+        "set_zekr_text": handle_set_zekr_text,
+        "set_completion_count": handle_set_completion_count
+        
     }
     
     req_type = request.get("type")

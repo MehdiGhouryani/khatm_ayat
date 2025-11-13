@@ -1172,3 +1172,5 @@ async def set_completion_count(update: Update, context: ContextTypes.DEFAULT_TYP
     except Exception as e:
         logger.error("Failed to set completion_count: %s", e, exc_info=True)
         await update.message.reply_text("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید یا با ادمین تماس بگیرید.")
+
+
