@@ -25,7 +25,6 @@ CREATE TABLE IF NOT EXISTS topics (
     name TEXT, 
     topic_id INTEGER,
     khatm_type TEXT NOT NULL CHECK(khatm_type IN ('ghoran', 'salavat', 'zekr')),
-    zekr_text TEXT DEFAULT '',
     current_total INTEGER DEFAULT 0,
     period_number INTEGER DEFAULT 0,
     reset_on_period INTEGER DEFAULT 0,
@@ -41,6 +40,15 @@ CREATE TABLE IF NOT EXISTS topics (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (group_id, topic_id),
     FOREIGN KEY (group_id) REFERENCES groups(group_id)
+);
+
+CREATE TABLE IF NOT EXISTS topic_zekrs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id INTEGER,
+    topic_id INTEGER,
+    zekr_text TEXT NOT NULL,
+    current_total INTEGER DEFAULT 0,
+    FOREIGN KEY (group_id, topic_id) REFERENCES topics(group_id, topic_id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS khatm_ranges (
@@ -72,9 +80,11 @@ CREATE TABLE IF NOT EXISTS contributions (
     topic_id INTEGER,
     amount INTEGER,
     verse_id INTEGER,
+    zekr_id INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id, group_id, topic_id) REFERENCES users(user_id, group_id, topic_id),
-    FOREIGN KEY (group_id, topic_id) REFERENCES topics(group_id, topic_id)
+    FOREIGN KEY (group_id, topic_id) REFERENCES topics(group_id, topic_id),
+    FOREIGN KEY (zekr_id) REFERENCES topic_zekrs(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS sepas_texts (
@@ -110,6 +120,7 @@ CREATE INDEX IF NOT EXISTS idx_contributions_group_topic ON contributions(group_
 CREATE INDEX IF NOT EXISTS idx_users_group_topic ON users(group_id, topic_id);
 CREATE INDEX IF NOT EXISTS idx_topics_group_topic ON topics(group_id, topic_id);
 CREATE INDEX IF NOT EXISTS idx_khatm_ranges_group_topic ON khatm_ranges(group_id, topic_id);
+CREATE INDEX IF NOT EXISTS idx_topic_zekrs_group_topic ON topic_zekrs(group_id, topic_id);
 
 
 CREATE TRIGGER IF NOT EXISTS update_topics_timestamp

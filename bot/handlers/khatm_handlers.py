@@ -1,13 +1,14 @@
 import asyncio
 import datetime
 import logging
+import time
 from datetime import timezone
 from pytz import timezone
-from telegram import Update,constants, ReplyParameters
+from telegram import Update, constants, ReplyParameters, InlineKeyboardButton, InlineKeyboardMarkup
 from typing import List, Optional
 from telegram.ext import ContextTypes
 from telegram.error import TimedOut
-from bot.database.db import fetch_one,write_queue
+from bot.database.db import fetch_one, write_queue, fetch_all
 from bot.utils.helpers import parse_number, format_khatm_message, get_random_sepas, reply_text_and_schedule_deletion, ignore_old_messages
 from bot.utils.quran import QuranManager
 from bot.handlers.admin_handlers import is_admin, TEXT_COMMANDS
@@ -25,6 +26,8 @@ def log_function_call(func):
             logger.error(f"Error in function {func.__name__}: {e}", exc_info=True)
             raise
     return wrapper
+
+
 
 @ignore_old_messages()
 @log_function_call
@@ -212,16 +215,7 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                     logger.error(f"Failed to delete non-numeric message in lock mode for group {group_id}: {e_del}")
                 return 
         # Step 5: Handle awaiting states for zekr
-        if context.user_data.get("awaiting_zekr"):
-            logger.info("Found awaiting_zekr state: user=%s", username)
-            if await is_admin(update, context):
-                logger.info("Processing awaiting_zekr state for user=%s", username)
-                from bot.handlers.admin_handlers import set_zekr_text
-                await set_zekr_text(update, context)
-                return
-            else:
-                logger.warning("Non-admin user attempted to set zekr: user=%s", username)
-                context.user_data.pop("awaiting_zekr", None)
+
 
         # Step 6: Process number input for contributions
         number = parse_number(raw_text)
@@ -231,7 +225,7 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 logger.info("Informed user about numeric input for Quran khatm: group_id=%s, user=%s", group_id, username)
                 return
             return
-
+        amount = number
         logger.info("Parsed number from message: number=%d, user=%s", number, username)
 
 # Step 7: Validate number range
@@ -249,7 +243,7 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 await update.message.reply_text(f"تعداد آیات باید حداقل {min_verses} باشد.")
                 return
             
-        elif topic["khatm_type"] in ["salavat", "zekr"]: #
+        elif topic["khatm_type"] == "salavat":
             min_limit_to_apply = 0
             max_limit_to_apply = float('inf')
             limit_source_description = "گروه"
@@ -280,6 +274,63 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
                     await update.message.reply_text(f"عدد نمی‌تواند بیشتر از {max_limit_to_apply} باشد.")
                     return
         
+
+        elif topic["khatm_type"] == "zekr":
+            min_number = group.get("min_number", 0)
+            max_number = group.get("max_number", 1000000)
+
+            if not (min_number <= amount <= max_number):
+                logger.warning("Contribution amount %s out of range (%s-%s): group_id=%s, user_id=%s",
+                               amount, min_number, max_number, group_id, user_id)
+                msg = f"عدد ارسالی باید بین {min_number} و {max_number} باشد."
+                await reply_text_and_schedule_deletion(update, context, msg)
+                return
+            
+            logger.info("Handling zekr contribution, fetching zekr list: group_id=%s, topic_id=%s", group_id, topic_id)
+            zekrs = await fetch_all(
+                "SELECT id, zekr_text FROM topic_zekrs WHERE group_id = ? AND topic_id = ?",
+                (group_id, topic_id)
+            )
+
+            if not zekrs:
+                logger.warning("Zekr contribution received, but no zekr items are defined: group_id=%s, topic_id=%s",
+                               group_id, topic_id)
+                await reply_text_and_schedule_deletion(update, context, "ختم ذکر فعال است اما هیچ متنی برای آن تعریف نشده. لطفاً ادمین را مطلع کنید.")
+                return
+
+            user_msg_id = update.message.message_id
+            if 'pending_zekr' not in context.chat_data:
+                context.chat_data['pending_zekr'] = {}
+            
+            context.chat_data['pending_zekr'][user_msg_id] = {
+                "user_id": user_id,
+                "amount": amount,
+                "timestamp": time.time(),
+                "group_id": group_id,
+                "topic_id": topic_id,
+                "username": username,
+                "first_name": first_name
+            }
+            logger.info("Stored pending zekr: msg_id=%s, user_id=%s, amount=%s", user_msg_id, user_id, amount)
+
+            keyboard = []
+            for zekr in zekrs:
+                callback_data = f"zekr_sel_{user_msg_id}_{zekr['id']}"
+                keyboard.append([InlineKeyboardButton(zekr['text'], callback_data=callback_data)])
+            
+            keyboard.append([InlineKeyboardButton("❌ لغو", callback_data=f"zekr_cancel_{user_msg_id}")])
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            await update.message.reply_text(
+                "ذکر شما برای کدام مورد ثبت شود؟",
+                reply_markup=reply_markup,
+                reply_parameters=ReplyParameters(message_id=user_msg_id)
+            )
+            return
+
+
+
+
         elif topic["khatm_type"] not in ["ghoran", "salavat", "zekr"]: #
             group_min_number = group.get("min_number", 0) #
             group_max_number = group.get("max_number", 100000000000) #
@@ -449,7 +500,7 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
             new_total=new_total_for_display,
             sepas_text=sepas_text,
             group_id=group_id,
-            zekr_text=topic["zekr_text"],
+            zekr_text=None,
             verses=verses_for_display,
             max_display_verses=group["max_display_verses"],
             completion_count=topic["completion_count"]
@@ -547,7 +598,15 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
             logger.warning(
                 "Timed out sending error message for group_id=%s, topic_id=%s",
                 group_id, topic_id
-            )            
+            )    
+
+
+
+
+
+
+
+
 @ignore_old_messages()
 @log_function_call
 async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1035,3 +1094,92 @@ async def khatm_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except TimedOut:
             logger.warning("Timed out sending error message for group_id=%s, topic_id=%s",
                          group_id, topic_id)
+
+
+
+
+
+@log_function_call
+async def handle_zekr_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle the callback query for selecting a zekr type."""
+    try:
+        query = update.callback_query
+        await query.answer()
+        
+        data = query.data
+        user_id = query.from_user.id
+        
+        # فرمت دیتا: zekr_sel_{user_msg_id}_{zekr_id} یا zekr_cancel_{user_msg_id}
+        parts = data.split("_")
+        if len(parts) < 3:
+            logger.warning("Invalid callback data format: %s", data)
+            return
+
+        action = parts[1] # sel یا cancel
+        user_msg_id = int(parts[2])
+        
+        logger.info("Processing zekr selection: action=%s, user_msg_id=%s, user_id=%s", action, user_msg_id, user_id)
+
+        # بازیابی اطلاعات موقت
+        pending_data = context.chat_data.get('pending_zekr', {}).get(user_msg_id)
+
+        if not pending_data:
+            try:
+                await query.edit_message_text("❌ این درخواست منقضی شده است. لطفاً دوباره عدد را ارسال کنید.")
+            except Exception:
+                await query.message.delete()
+            return
+
+        # کنترل دسترسی: فقط شخصی که عدد را فرستاده می‌تواند انتخاب کند
+        if user_id != pending_data["user_id"]:
+            await query.answer("⛔ این دکمه مربوط به درخواست شما نیست.", show_alert=True)
+            return
+
+        if action == "cancel":
+            # حذف اطلاعات موقت و پیام
+            if 'pending_zekr' in context.chat_data and user_msg_id in context.chat_data['pending_zekr']:
+                del context.chat_data['pending_zekr'][user_msg_id]
+            await query.message.delete()
+            return
+
+        if action == "sel":
+            zekr_id = int(parts[3])
+            amount = pending_data["amount"]
+            group_id = pending_data["group_id"]
+            topic_id = pending_data["topic_id"]
+            username = pending_data["username"]
+            first_name = pending_data["first_name"]
+
+            # ایجاد درخواست برای دیتابیس
+            request = {
+                "type": "submit_zekr_contribution",  # نوع جدید درخواست برای db.py
+                "user_id": user_id,
+                "group_id": group_id,
+                "topic_id": topic_id,
+                "zekr_id": zekr_id,
+                "amount": amount,
+                "username": username,
+                "first_name": first_name,
+                # اطلاعات برای ارسال پیام تایید در db.py
+                "bot": context.bot,
+                "chat_id": group_id,
+                "thread_id": topic_id if topic_id != group_id else None
+            }
+
+            await write_queue.put(request)
+            logger.info("Queued zekr contribution: user_id=%s, zekr_id=%s, amount=%s", user_id, zekr_id, amount)
+
+            # پاکسازی
+            if 'pending_zekr' in context.chat_data and user_msg_id in context.chat_data['pending_zekr']:
+                del context.chat_data['pending_zekr'][user_msg_id]
+            
+            # حذف پیام دکمه‌ها
+            await query.message.delete()
+
+    except Exception as e:
+        logger.error("Error in handle_zekr_selection: %s", e, exc_info=True)
+        if query and query.message:
+            try:
+                await query.edit_message_text("خطایی رخ داد.")
+            except Exception:
+                pass

@@ -952,6 +952,93 @@ async def handle_set_zekr_text(cursor, request):
     logger.info("Processed set_zekr_text for group_id=%s, topic_id=%s", 
                 request["group_id"], request["topic_id"])
 
+
+
+
+async def handle_zekr_contribution(request: Dict[str, Any]):
+    """Handle zekr contribution database transaction and notification."""
+    user_id = request['user_id']
+    group_id = request['group_id']
+    topic_id = request['topic_id']
+    zekr_id = request['zekr_id']
+    amount = request['amount']
+    username = request['username']
+    first_name = request['first_name']
+    bot = request.get('bot')
+    chat_id = request.get('chat_id')
+    thread_id = request.get('thread_id')
+
+    try:
+        async with aiosqlite.connect(DATABASE_PATH) as db:
+            # 1. اطمینان از وجود کاربر (چون در هندلر اصلی ممکن است رد شده باشد)
+            await db.execute(
+                "INSERT OR IGNORE INTO users (user_id, group_id, topic_id, username, first_name, total_salavat, total_zekr, total_ayat) VALUES (?, ?, ?, ?, ?, 0, 0, 0)",
+                (user_id, group_id, topic_id, username, first_name)
+            )
+
+            # 2. ثبت مشارکت در جدول contributions
+            await db.execute(
+                "INSERT INTO contributions (user_id, group_id, topic_id, amount, zekr_id) VALUES (?, ?, ?, ?, ?)",
+                (user_id, group_id, topic_id, amount, zekr_id)
+            )
+
+            # 3. آپدیت آمار کاربر
+            await db.execute(
+                "UPDATE users SET total_zekr = total_zekr + ? WHERE user_id = ? AND group_id = ? AND topic_id = ?",
+                (amount, user_id, group_id, topic_id)
+            )
+            
+            # 4. آپدیت آمار آن ذکر خاص
+            await db.execute(
+                "UPDATE topic_zekrs SET current_total = current_total + ? WHERE id = ?",
+                (amount, zekr_id)
+            )
+
+            # 5. آپدیت آمار کل تاپیک
+            await db.execute(
+                "UPDATE topics SET current_total = current_total + ? WHERE group_id = ? AND topic_id = ?",
+                (amount, group_id, topic_id)
+            )
+
+            await db.commit()
+            
+            # دریافت اطلاعات به‌روز شده برای نمایش در پیام
+            async with db.execute("SELECT zekr_text, current_total FROM topic_zekrs WHERE id = ?", (zekr_id,)) as cursor:
+                zekr_row = await cursor.fetchone()
+            
+            async with db.execute("SELECT current_total FROM topics WHERE group_id = ? AND topic_id = ?", (group_id, topic_id)) as cursor:
+                topic_row = await cursor.fetchone()
+
+        # ارسال پیام تایید به گروه
+        if bot and chat_id and zekr_row:
+            zekr_text = zekr_row[0]
+            zekr_total = zekr_row[1]
+            topic_total = topic_row[0] if topic_row else 0
+            
+            message = (
+                f"✅ **{amount}** {zekr_text} ثبت شد.\n"
+                f"👤 **ذاکر:** {first_name}\n"
+                f"📊 **تعداد این ذکر:** {zekr_total:,}\n"
+                f"🔢 **مجموع کل:** {topic_total:,}"
+            )
+            
+            try:
+                sent_message = await bot.send_message(
+                    chat_id=chat_id,
+                    text=message,
+                    message_thread_id=thread_id,
+                    parse_mode="Markdown"
+                )
+                # حذف پیام پس از مدتی (اختیاری - مشابه رفتار قبلی)
+                await asyncio.sleep(15)
+                await sent_message.delete()
+            except Exception as e:
+                logger.error("Failed to send zekr confirmation message: %s", e)
+
+    except Exception as e:
+        logger.error(f"Error in handle_zekr_contribution: {e}", exc_info=True)
+
+
 async def process_queue_request(request: Dict[str, Any]) -> None:
     handlers = {
         "update_user": handle_update_user,
@@ -995,7 +1082,8 @@ async def process_queue_request(request: Dict[str, Any]) -> None:
         "khatm_number": handle_khatm_number,
         "update_tag_timestamp": handle_update_tag_timestamp,
         "set_zekr_text": handle_set_zekr_text,
-        "set_completion_count": handle_set_completion_count
+        "set_completion_count": handle_set_completion_count,
+        "submit_zekr_contribution": handle_zekr_contribution,
         
     }
     
@@ -1299,3 +1387,6 @@ async def generate_invite_links_for_all_groups(bot) -> None:
     except Exception as e:
         logger.error("Error generating invite links for all groups: %s", str(e), exc_info=True)
         raise DatabaseError(f"Error generating invite links: {str(e)}", e)
+
+
+

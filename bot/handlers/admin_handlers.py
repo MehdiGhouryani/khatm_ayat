@@ -57,8 +57,7 @@ TEXT_COMMANDS = {
     "jam on": {"handler": "jam_on", "admin_only": True, "aliases": ["جمع روشن"], "takes_args": False},
     "jam off": {"handler": "jam_off", "admin_only": True, "aliases": ["جمع خاموش"], "takes_args": False},
     "set completion message": {"handler": "set_completion_message", "admin_only": True, "aliases": ["پیام تکمیل"], "takes_args": True},
-    "khatm zekr": {"handler": "start_khatm_zekr", "admin_only": True, "aliases": ["ختم ذکر"], "takes_args": False},
-    "khatm salavat": {"handler": "start_khatm_salavat", "admin_only": True, "aliases": ["ختم صلوات"], "takes_args": False},
+    "khatm zekr": {"handler": "start_khatm_zekr", "admin_only": True, "aliases": ["ختم ذکر"], "takes_args": False},    "khatm salavat": {"handler": "start_khatm_salavat", "admin_only": True, "aliases": ["ختم صلوات"], "takes_args": False},
     "khatm ghoran": {"handler": "start_khatm_ghoran", "admin_only": True, "aliases": ["ختم قرآن"], "takes_args": False},
     "set range": {"handler": "set_range", "admin_only": True, "aliases": ["تنظیم محدوده"], "takes_args": True},
     "topic": {"handler": "topic", "admin_only": True, "aliases": ["تاپیک"], "takes_args": True},
@@ -68,8 +67,14 @@ TEXT_COMMANDS = {
     "start from": {"handler": "start_from", "admin_only": True, "aliases": ["شروع از"], "takes_args": True},
     "delete on": {"handler": "delete_after", "admin_only": True, "aliases": ["حذف روشن"], "takes_args": True},
     "delete off": {"handler": "delete_off", "admin_only": True, "aliases": ["حذف خاموش"], "takes_args": False},
-    "status": {"handler": "khatm_status", "admin_only": False, "aliases": ["وضعیت"], "takes_args": False}
+    "status": {"handler": "khatm_status", "admin_only": False, "aliases": ["وضعیت"], "takes_args": False},
+    "add zekr": {"handler": "add_zekr", "admin_only": True, "aliases": ["اضافه ذکر"], "takes_args": True},
+    "remove zekr": {"handler": "remove_zekr", "admin_only": True, "aliases": ["حذف ذکر"], "takes_args": False},
+    "list zekrs": {"handler": "list_zekrs", "admin_only": True, "aliases": ["لیست ذکرها"], "takes_args": False},
 }
+
+
+
 
 @ignore_old_messages()
 @log_function_call
@@ -91,11 +96,16 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 تنظیم تعداد و شروع ختم:
 `number 14000` - تنظیم تعداد هدف صلوات/ذکر
-`khatm zekr` - شروع ختم ذکر
 `khatm salavat` - شروع ختم صلوات
 `khatm ghoran` - شروع ختم قرآن
 `set range` - تنظیم محدوده ختم قرآن 
 `set completion message` - تنظیم پیام پایان ختم
+
+مدیریت ختم ذکر:
+`khatm zekr` - فعال‌سازی ختم ذکر (آماده‌سازی برای افزودن ذکرها)
+`add_zekr سبحان الله` - افزودن متن ذکر جدید به ختم
+`remove_zekr` - حذف یک ذکر از لیست
+`list_zekrs` - نمایش لیست ذکرها و آمار فعلی
 
 تصحیح مشارکت:
 `-100` - کاهش صلوات یا ذکر اشتباه واردشده
@@ -154,14 +164,16 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 نام‌گذاری تاپیک:
 `topic اصلی` - تنظیم نام تاپیک 
 
-
-
 """
         await update.message.reply_text(help_text, parse_mode=constants.ParseMode.MARKDOWN)
         logger.info("Help message sent successfully: user_id=%s", update.effective_user.id)
     except Exception as e:
         logger.error("Error in help command: %s", e, exc_info=True)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
+
+
+
+
 
 @log_function_call
 async def set_max_verses(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -501,9 +513,10 @@ async def khatm_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "❌ خطایی رخ داد. لطفاً دوباره تلاش کنید یا با ادمین تماس بگیرید."
             )
 
+
 @ignore_old_messages()
 async def start_khatm_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start a new zekr khatm and prompt for zekr text."""
+    """Start a new zekr khatm and clear any existing zekr items for this topic."""
     try:
         logger.info("Starting start_khatm_zekr: user_id=%s, chat_id=%s", 
                    update.effective_user.id, update.effective_chat.id)
@@ -520,34 +533,25 @@ async def start_khatm_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
         topic_id = update.message.message_thread_id or group_id
         logger.info("Processing start_khatm_zekr: group_id=%s, topic_id=%s", group_id, topic_id)
 
-        # Check if group is active
         group = await fetch_one("SELECT is_active FROM groups WHERE group_id = ?", (group_id,))
         if not group or not group["is_active"]:
             logger.warning("Group not active for start_khatm_zekr: group_id=%s", group_id)
             await update.message.reply_text("گروه فعال نیست. از `start` یا 'شروع' استفاده کنید.",parse_mode=constants.ParseMode.MARKDOWN)
             return ConversationHandler.END
 
-        # Check if there's already an active khatm
-        active_topic = await fetch_one(
-            "SELECT khatm_type FROM topics WHERE group_id = ? AND topic_id = ? AND is_active = 1",
-            (group_id, topic_id)
-        )
-        
-        if active_topic and active_topic["khatm_type"] == "zekr":
-            logger.warning("Active zekr khatm already exists: group_id=%s, topic_id=%s", group_id, topic_id)
-            await update.message.reply_text("یک ختم ذکر فعال وجود دارد.")
-            return ConversationHandler.END
-
-        # Clear all user_data states to prevent conflicts
         context.user_data.clear()
         logger.debug("Cleared user_data context for start_khatm_zekr")
         
-        # Deactivate any existing khatm
         old_khatm_type = await deactivate_current_khatm(group_id, topic_id)
         logger.info("Deactivated old khatm: group_id=%s, topic_id=%s, old_type=%s", 
                    group_id, topic_id, old_khatm_type)
 
-        # Directly insert/replace the new khatm
+        await execute(
+            "DELETE FROM topic_zekrs WHERE group_id = ? AND topic_id = ?",
+            (group_id, topic_id)
+        )
+        logger.info("Cleared old zekr items for new khatm: group_id=%s, topic_id=%s", group_id, topic_id)
+
         await execute(
             """
             INSERT OR REPLACE INTO topics
@@ -558,25 +562,16 @@ async def start_khatm_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         logger.info("Directly started/replaced zekr khatm: group_id=%s, topic_id=%s", group_id, topic_id)
 
-        # Set awaiting state
-        context.user_data["awaiting_zekr"] = {
-            "topic_id": topic_id,
-            "group_id": group_id,
-            "timestamp": time.time()
-        }
-        logger.info("Set awaiting_zekr state: group_id=%s, topic_id=%s, timestamp=%s", 
-                   group_id, topic_id, context.user_data["awaiting_zekr"]["timestamp"])
-        
         message = (
             "**📿 ختم ذکر فعال شد** 🌱\n"
             "➖➖➖➖➖➖➖➖➖➖➖\n"
-            "**لطفاً متن ذکر را وارد کنید**\n"
-            "**مثال:** سبحان‌الله"
+            "اکنون با دستور `add_zekr` یا 'اضافه ذکر' متن ذکرهای مورد نظر خود را اضافه کنید.\n"
+            "**مثال:** `add_zekr سبحان الله`"
         )
 
-        await update.message.reply_text(message, parse_mode=constants.ParseMode.MARKDOWN_V2)
-        logger.info("Sent zekr text prompt message")
-        return 1
+        await update.message.reply_text(message, parse_mode=constants.ParseMode.MARKDOWN)
+        logger.info("Sent zekr start message, prompting for /add_zekr")
+        return ConversationHandler.END
 
     except Exception as e:
         logger.error("Error in start_khatm_zekr: group_id=%s, topic_id=%s, error=%s",
@@ -585,115 +580,7 @@ async def start_khatm_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
         return ConversationHandler.END
 
-@ignore_old_messages()
-@log_function_call
-async def set_zekr_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Set the zekr text for an active khatm."""
-    try:
-        logger.info("Processing set_zekr_text: user_id=%s, chat_id=%s",
-                   update.effective_user.id, update.effective_chat.id)
 
-        if not update.effective_chat or update.effective_chat.type not in ["group", "supergroup"]:
-            logger.warning("set_zekr_text called in non-group chat: user_id=%s",
-                         update.effective_user.id)
-            return ConversationHandler.END
-
-        if not await is_admin(update, context):
-            logger.warning("Non-admin user attempted set_zekr_text: user_id=%s",
-                         update.effective_user.id)
-            return ConversationHandler.END
-
-        if "awaiting_zekr" not in context.user_data:
-            logger.warning("No awaiting_zekr state found in user_data")
-            await update.message.reply_text("هیچ ختم ذکری در انتظار تنظیم نیست.")
-            return ConversationHandler.END
-
-        # Validate state timestamp (10 minutes timeout)
-        state_data = context.user_data["awaiting_zekr"]
-        current_time = time.time()
-        state_age = current_time - state_data.get("timestamp", 0)
-        logger.info("Checking state age: current_time=%s, state_timestamp=%s, age=%s seconds",
-                   current_time, state_data.get("timestamp"), state_age)
-
-        if state_age > 600:  # 10 minutes timeout
-            logger.warning("State timeout exceeded: age=%s seconds", state_age)
-            context.user_data.clear()
-            await update.message.reply_text("زمان تنظیم متن ذکر به پایان رسیده است. لطفاً دوباره تلاش کنید.")
-            return ConversationHandler.END
-
-        group_id = update.effective_chat.id
-        topic_id = update.message.message_thread_id or group_id
-        logger.info("Processing set_zekr_text: group_id=%s, topic_id=%s",
-                   group_id, topic_id)
-
-        # Verify topic is active and of type zekr
-        topic = await fetch_one(
-            "SELECT is_active, khatm_type FROM topics WHERE topic_id = ? AND group_id = ?",
-            (topic_id, group_id)
-        )
-        logger.debug("Retrieved topic info: exists=%s, active=%s, type=%s",
-                    bool(topic), topic["is_active"] if topic else None,
-                    topic["khatm_type"] if topic else None)
-
-        if not topic:
-            logger.error("Topic not found: group_id=%s, topic_id=%s",
-                        group_id, topic_id)
-            context.user_data.clear()
-            await update.message.reply_text("تاپیک ختم یافت نشد.")
-            return ConversationHandler.END
-
-        if not topic["is_active"]:
-            logger.warning("Topic not active: group_id=%s, topic_id=%s",
-                         group_id, topic_id)
-            context.user_data.clear()
-            await update.message.reply_text("ختم ذکر فعال نیست. لطفاً ابتدا ختم ذکر را شروع کنید.")
-            return ConversationHandler.END
-
-        if topic["khatm_type"] != "zekr":
-            logger.warning("Topic is not zekr type: group_id=%s, topic_id=%s, type=%s",
-                         group_id, topic_id, topic["khatm_type"])
-            context.user_data.clear()
-            await update.message.reply_text("این تاپیک ختم ذکر نیست.")
-            return ConversationHandler.END
-
-        zekr_text = update.message.text.strip()
-        if not zekr_text:
-            logger.warning("Empty zekr text provided")
-            await update.message.reply_text("متن ذکر نمی‌تواند خالی باشد.")
-            return 1
-
-        # Validate zekr text length
-        if len(zekr_text) > 100:
-            logger.warning("Zekr text too long: length=%d", len(zekr_text))
-            await update.message.reply_text("متن ذکر نباید بیشتر از ۱۰۰ کاراکتر باشد.")
-            return 1
-
-        logger.info("Valid zekr text received: length=%d", len(zekr_text))
-
-        # Queue the zekr text update
-        request = {
-            "type": "set_zekr_text",
-            "group_id": group_id,
-            "topic_id": topic_id,
-            "zekr_text": zekr_text
-        }
-        await write_queue.put(request)
-        logger.info("Queued zekr text update: group_id=%s, topic_id=%s",
-                   group_id, topic_id)
-
-        # Clear the awaiting state
-        context.user_data.clear()
-        logger.info("Cleared user_data context after successful zekr text update")
-
-        await update.message.reply_text(f"✅ متن ذکر با موفقیت تنظیم شد:\n{zekr_text}")
-        logger.info("Sent confirmation message for zekr text update")
-        return ConversationHandler.END
-
-    except Exception as e:
-        logger.error("Error in set_zekr_text: %s", e, exc_info=True)
-        context.user_data.clear()
-        await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
-        return ConversationHandler.END
 
 @ignore_old_messages()
 @log_function_call
@@ -1116,6 +1003,218 @@ async def set_completion_message(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
 
+
+
+@ignore_old_messages()
+@log_function_call
+async def add_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Add a new zekr text to the active zekr khatm."""
+    try:
+        logger.info("Processing add_zekr: user_id=%s, chat_id=%s",
+                   update.effective_user.id, update.effective_chat.id)
+
+        if not await is_admin(update, context):
+            logger.warning("Non-admin user attempted add_zekr: user_id=%s",
+                         update.effective_user.id)
+            return
+
+        group_id = update.effective_chat.id
+        topic_id = update.message.message_thread_id or group_id
+
+        topic = await fetch_one(
+            "SELECT is_active, khatm_type FROM topics WHERE topic_id = ? AND group_id = ?",
+            (topic_id, group_id)
+        )
+
+        if not topic or not topic["is_active"] or topic["khatm_type"] != "zekr":
+            logger.warning("No active zekr khatm found: group_id=%s, topic_id=%s",
+                         group_id, topic_id)
+            await update.message.reply_text("هیچ ختم ذکر فعالی برای افزودن متن وجود ندارد. ابتدا ختم ذکر را شروع کنید.")
+            return
+
+        if not context.args:
+            logger.warning("No zekr text provided for add_zekr")
+            await update.message.reply_text(
+                "لطفاً متن ذکر را وارد کنید.\n"
+                "مثال: add_zekr سبحان الله"
+            )
+            return
+
+        zekr_text = " ".join(context.args).strip()
+        if not zekr_text:
+            logger.warning("Empty zekr text provided")
+            await update.message.reply_text("متن ذکر نمی‌تواند خالی باشد.")
+            return
+
+        if len(zekr_text) > 100:
+            logger.warning("Zekr text too long: length=%d", len(zekr_text))
+            await update.message.reply_text("متن ذکر نباید بیشتر از ۱۰۰ کاراکتر باشد.")
+            return
+
+        await execute(
+            "INSERT INTO topic_zekrs (group_id, topic_id, zekr_text) VALUES (?, ?, ?)",
+            (group_id, topic_id, zekr_text)
+        )
+        logger.info("Added new zekr: group_id=%s, topic_id=%s, text=%s",
+                   group_id, topic_id, zekr_text)
+
+        await update.message.reply_text(f"✅ ذکر با موفقیت اضافه شد:\n{zekr_text}")
+
+    except Exception as e:
+        logger.error("Error in add_zekr: %s", e, exc_info=True)
+        await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
+
+
+
+
+@ignore_old_messages()
+@log_function_call
+async def list_zekrs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """List all current zekr texts and their totals for the active khatm."""
+    try:
+        logger.info("Processing list_zekrs: user_id=%s, chat_id=%s",
+                   update.effective_user.id, update.effective_chat.id)
+
+        if not await is_admin(update, context):
+            logger.warning("Non-admin user attempted list_zekrs: user_id=%s",
+                         update.effective_user.id)
+            return
+
+        group_id = update.effective_chat.id
+        topic_id = update.message.message_thread_id or group_id
+
+        topic = await fetch_one(
+            "SELECT is_active, khatm_type FROM topics WHERE topic_id = ? AND group_id = ?",
+            (topic_id, group_id)
+        )
+
+        if not topic or not topic["is_active"] or topic["khatm_type"] != "zekr":
+            logger.warning("No active zekr khatm found for list_zekrs: group_id=%s, topic_id=%s",
+                         group_id, topic_id)
+            await update.message.reply_text("هیچ ختم ذکر فعالی وجود ندارد.")
+            return
+
+        zekrs = await fetch_all(
+            "SELECT zekr_text, current_total FROM topic_zekrs WHERE group_id = ? AND topic_id = ?",
+            (group_id, topic_id)
+        )
+
+        if not zekrs:
+            await update.message.reply_text(
+                "هنوز هیچ ذکری برای این ختم اضافه نشده است.\n"
+                "از دستور `add_zekr` برای اضافه کردن استفاده کنید."
+            )
+            return
+
+        message = "📊 **لیست ذکرها و آمار فعلی:**\n"
+        message += "➖➖➖➖➖➖➖➖➖➖➖\n"
+        total_khatm = 0
+        for zekr in zekrs:
+            message += f"• **{zekr['zekr_text']}**: {zekr['current_total']:,}\n"
+            total_khatm += zekr['current_total']
+        
+        message += f"\n**مجموع کل:** {total_khatm:,}"
+
+        await update.message.reply_text(message, parse_mode=constants.ParseMode.MARKDOWN)
+
+    except Exception as e:
+        logger.error("Error in list_zekrs: %s", e, exc_info=True)
+        await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
+
+
+
+@ignore_old_messages()
+@log_function_call
+async def remove_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show a list of zekrs with delete buttons for admins."""
+    try:
+        logger.info("Processing remove_zekr: user_id=%s, chat_id=%s",
+                   update.effective_user.id, update.effective_chat.id)
+
+        if not await is_admin(update, context):
+            logger.warning("Non-admin user attempted remove_zekr: user_id=%s",
+                         update.effective_user.id)
+            return
+
+        group_id = update.effective_chat.id
+        topic_id = update.message.message_thread_id or group_id
+
+        topic = await fetch_one(
+            "SELECT is_active, khatm_type FROM topics WHERE topic_id = ? AND group_id = ?",
+            (topic_id, group_id)
+        )
+
+        if not topic or not topic["is_active"] or topic["khatm_type"] != "zekr":
+            logger.warning("No active zekr khatm found for remove_zekr: group_id=%s, topic_id=%s",
+                         group_id, topic_id)
+            await update.message.reply_text("هیچ ختم ذکر فعالی وجود ندارد.")
+            return
+
+        zekrs = await fetch_all(
+            "SELECT id, zekr_text FROM topic_zekrs WHERE group_id = ? AND topic_id = ?",
+            (group_id, topic_id)
+        )
+
+        if not zekrs:
+            await update.message.reply_text("هیچ ذکری برای حذف وجود ندارد.")
+            return
+
+        keyboard = []
+        for zekr in zekrs:
+            button_text = f"❌ {zekr['zekr_text']}"
+            callback_data = f"del_zekr_{zekr['id']}"
+            keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
+
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text("کدام ذکر حذف شود؟", reply_markup=reply_markup)
+
+    except Exception as e:
+        logger.error("Error in remove_zekr: %s", e, exc_info=True)
+        await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
+
+
+@log_function_call
+async def handle_remove_zekr_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle the callback query for deleting a zekr."""
+    try:
+        query = update.callback_query
+        await query.answer()
+
+        user_id = query.from_user.id
+        group_id = query.message.chat.id
+        logger.info("Processing handle_remove_zekr_click: user_id=%s, chat_id=%s, data=%s",
+                   user_id, group_id, query.data)
+
+        if not await is_admin(update, context):
+            logger.warning("Non-admin user attempted zekr deletion callback")
+            await query.answer("این دکمه مخصوص ادمین است.", show_alert=True)
+            return
+
+        if not query.data.startswith("del_zekr_"):
+            logger.warning("Invalid callback data received: %s", query.data)
+            return
+
+        zekr_id = int(query.data.split("_")[-1])
+
+        zekr = await fetch_one("SELECT zekr_text FROM topic_zekrs WHERE id = ?", (zekr_id,))
+        
+        if not zekr:
+            logger.warning("Zekr not found or already deleted: id=%d", zekr_id)
+            await query.edit_message_text("این ذکر قبلاً حذف شده است.")
+            return
+
+        zekr_text = zekr['zekr_text']
+        await execute("DELETE FROM topic_zekrs WHERE id = ?", (zekr_id,))
+        
+        logger.info("Zekr deleted: id=%d, text=%s, by_admin=%s",
+                    zekr_id, zekr_text, user_id)
+
+        await query.edit_message_text(f"✅ ذکر «{zekr_text}» با موفقیت حذف شد.")
+
+    except Exception as e:
+        logger.error("Error in handle_remove_zekr_click: %s", e, exc_info=True)
+        if query and query.message:
+            await query.edit_message_text("خطایی در حذف ذکر رخ داد.")
 
 
         

@@ -1,12 +1,30 @@
 import asyncio
 import logging
 import backoff
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ConversationHandler, ChatMemberHandler
-from telegram import Update,InlineKeyboardButton,InlineKeyboardMarkup,ChatMember
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ChatMemberHandler
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatMember
 from telegram.ext import ContextTypes
-from bot.handlers.admin_handlers import start, stop, topic, khatm_selection, set_zekr_text, help_command, set_range, start_khatm_zekr, start_khatm_salavat, start_khatm_ghoran, set_khatm_target_number, TEXT_COMMANDS, set_completion_count
-from bot.handlers.khatm_handlers import handle_khatm_message, subtract_khatm, start_from, khatm_status
-from bot.handlers.settings_handlers import reset_zekr, reset_kol, stop_on, stop_on_off, set_max, max_off, set_min, min_off, sepas_on, sepas_off, add_sepas, number_off, time_off, time_off_disable, lock_on, lock_off, jam_off, jam_on, set_completion_message, reset_daily, reset_off, reset_number_on, reset_number_off, delete_after, delete_off, reset_daily_groups, reset_periodic_topics, handle_new_message, max_ayat, min_ayat
+
+# ایمپورت‌های به‌روز شده از هندلرها
+from bot.handlers.admin_handlers import (
+    start, stop, topic, khatm_selection, help_command, set_range, 
+    start_khatm_zekr, start_khatm_salavat, start_khatm_ghoran, 
+    set_khatm_target_number, TEXT_COMMANDS, set_completion_count,
+    add_zekr, remove_zekr, list_zekrs, handle_remove_zekr_click, # <--- توابع جدید و صحیح ادمین
+    is_admin
+)
+from bot.handlers.khatm_handlers import (
+    handle_khatm_message, subtract_khatm, start_from, khatm_status,
+    handle_zekr_selection # <--- تابع جدید دکمه‌های ذکر
+)
+from bot.handlers.settings_handlers import (
+    reset_zekr, reset_kol, stop_on, stop_on_off, set_max, max_off, 
+    set_min, min_off, sepas_on, sepas_off, add_sepas, number_off, 
+    time_off, time_off_disable, lock_on, lock_off, jam_off, jam_on, 
+    set_completion_message, reset_daily, reset_off, reset_number_on, 
+    reset_number_off, delete_after, delete_off, reset_daily_groups, 
+    reset_periodic_topics, handle_new_message, max_ayat, min_ayat
+)
 from bot.handlers.stats_handlers import show_total_stats, show_ranking
 from bot.handlers.hadith_handlers import hadis_on, hadis_off, send_daily_hadith
 from bot.handlers.tag_handlers import setup_handlers, TagManager
@@ -25,7 +43,7 @@ import time as time_module
 logger = logging.getLogger(__name__)
 logging.getLogger("apscheduler").setLevel(logging.WARNING)
 
-ZEKR_STATE = 1
+# ZEKR_STATE حذف شد چون دیگر نیازی به ConversationHandler نیست
 
 @backoff.on_exception(backoff.expo, Exception, max_tries=3, max_time=10)
 async def process_queue_periodically(context: ContextTypes.DEFAULT_TYPE):
@@ -40,7 +58,7 @@ def map_handlers():
         "stop": stop,
         "topic": topic,
         "khatm_selection": khatm_selection,
-        "set_zekr_text": set_zekr_text,
+        # "set_zekr_text": set_zekr_text, # حذف شد
         "help_command": help_command,
         "set_range": set_range,
         "start_khatm_zekr": start_khatm_zekr,
@@ -82,6 +100,9 @@ def map_handlers():
         "start_from": start_from,
         "khatm_status": khatm_status,
         "set_completion_count": set_completion_count,
+        "add_zekr": add_zekr,       # اضافه شد
+        "remove_zekr": remove_zekr, # اضافه شد
+        "list_zekrs": list_zekrs,   # اضافه شد
         "tag_command": lambda update, context: TagManager(context).tag_command(update, context),
         "cancel_tag": lambda update, context: TagManager(context).cancel_tag(update, context),
     }
@@ -90,7 +111,9 @@ def map_handlers():
         if handler_name in handler_map:
             info["handler"] = handler_map[handler_name]
         else:
-            raise ValueError(f"Handler {handler_name} not found for command {cmd}")
+            # اگر هندلر پیدا نشد، فقط لاگ می‌کنیم تا برنامه متوقف نشود (برای امنیت بیشتر)
+            logger.warning(f"Handler {handler_name} not found for command {cmd}")
+
 async def chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         chat_member = update.chat_member
@@ -100,12 +123,11 @@ async def chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         chat = update.effective_chat
         user = chat_member.new_chat_member.user
         user_id = user.id
-        # --- شروع منطق جدید برای ربات ---
+        
         if user.id == context.bot.id:
             old_status = chat_member.old_chat_member.status
             new_status = chat_member.new_chat_member.status
 
-            # ۱. زمانی که ربات به عنوان عضو عادی اضافه می‌شود
             if new_status == ChatMember.MEMBER and old_status != ChatMember.MEMBER:
                 await context.bot.send_message(
                     chat_id=chat.id,
@@ -114,11 +136,9 @@ async def chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
                 logger.info(f"Bot was added as a member to group {chat.id}. Sent admin request message.")
                 return
 
-            # ۲. زمانی که ربات به ادمین ارتقا پیدا می‌کند
             if new_status == ChatMember.ADMINISTRATOR and old_status == ChatMember.MEMBER:
                 logger.info(f"Bot was promoted to admin in group {chat.id}.")
 
-                # ثبت گروه در دیتابیس و ایجاد لینک دعوت (منطق قبلی)
                 group_exists = await fetch_one("SELECT group_id FROM groups WHERE group_id = ?", (chat.id,))
                 if not group_exists:
                     await execute("INSERT OR IGNORE INTO groups (group_id, is_active) VALUES (?, 1)", (chat.id,))
@@ -130,10 +150,8 @@ async def chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
                 except Exception as e:
                     logger.error(f"Failed to create invite link for group {chat.id} after promotion: {e}")
 
-                # بررسی تاپیک‌دار بودن گروه
                 full_chat = await context.bot.get_chat(chat.id)
                 if full_chat.is_forum:
-                    # پیام برای گروه‌های تاپیک‌دار
                     await context.bot.send_message(
                         chat_id=chat.id,
                         text="✅ ربات با موفقیت ادمین شد.\n\n"
@@ -141,7 +159,6 @@ async def chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
                         parse_mode='HTML'
                     )
                 else:
-                    # نمایش دکمه برای گروه‌های عادی
                     keyboard = [
                         [
                             InlineKeyboardButton("صلوات 🙏", callback_data="khatm_salavat"),
@@ -157,14 +174,11 @@ async def chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
                         reply_markup=reply_markup
                     )
             return
-        # --- پایان منطق جدید برای ربات ---
 
-        # منطق قبلی برای مدیریت ورود و خروج کاربران در گروه اصلی، بدون تغییر باقی می‌ماند
         if chat.id == MAIN_GROUP_ID:
             status = chat_member.new_chat_member.status
             current_timestamp = int(time_module.time())
             if status in ["member", "administrator", "creator"]:
-                # User joined or is active
                 username = user.username or None
                 first_name = user.first_name or "User"
                 last_name = user.last_name or None
@@ -181,7 +195,6 @@ async def chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
                 )
                 logger.info("User %s (%s) added/updated as active in main group %s", user.id, username or first_name, chat.id)
             elif status in ["left", "kicked"]:
-                # User left or was removed
                 await members_execute(
                     """
                     UPDATE members
@@ -238,12 +251,6 @@ async def handle_new_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
         logger.error("Error handling new message: %s", str(e), exc_info=True)
 
 @ignore_old_messages()
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ عملیات لغو شد.")
-    context.user_data.clear()
-    return ConversationHandler.END
-
-@ignore_old_messages()
 async def ignore_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat:
         await context.bot.send_message(update.effective_chat.id, "دستور ناشناخته! از /help استفاده کنید.")
@@ -252,16 +259,11 @@ async def initialize_app():
     if not TELEGRAM_TOKEN:
         raise ValueError("TELEGRAM_TOKEN is required")
 
-    # --- شروع بخش پاک‌سازی یک‌باره ---
-    # این کد فقط برای پاک کردن دیتابیس فعلی شما از رکوردهای تکراری است.
+    # پاک‌سازی متن‌های سپاس تکراری (یک‌بار اجرا)
     logger.info("Attempting to clean up duplicate default sepas texts...")
     try:
-        # ایمپورت موارد لازم در همینجا
         from bot.database.db import execute, init_db_connection
-        # ابتدا فقط به دیتابیس متصل می‌شویم
         await init_db_connection()
-
-        # اجرای دستور حذف رکوردهای تکراری (فقط برای متن‌های پیش‌فرض)
         await execute(
             """
             DELETE FROM sepas_texts
@@ -274,42 +276,34 @@ async def initialize_app():
             """
         )
         logger.info("Database cleanup successful. Duplicate default texts removed.")
-
     except Exception as e:
         logger.error(f"An error occurred during the one-time cleanup, but we will proceed: {e}")
-    # --- پایان بخش پاک‌سازی ---
 
-    # حالا schema را روی دیتابیس تمیز شده اجرا می‌کنیم
     await init_db()
 
-    # ادامه کد اصلی تابع (بدون تغییر)
     import aiosqlite
+    from bot.database.db import execute
     for text in DEFAULT_SEPAS_TEXTS:
         try:
-            # تلاش برای درج متن (بدون OR IGNORE)
             await execute(
                 "INSERT INTO sepas_texts (text, is_default, group_id) VALUES (?, 1, NULL)",
                 (text,)
             )
         except aiosqlite.IntegrityError:
-            # اگر متن از قبل وجود داشته باشد، خطا می‌دهد و ما رد می‌شویم
             pass
 
-        
 def register_handlers(app: Application):
-    conv_handler = ConversationHandler(
-        entry_points=[
-            CommandHandler("khatm_zekr", start_khatm_zekr),
-            CommandHandler("khatm_salavat", start_khatm_salavat),
-            CommandHandler("khatm_ghoran", start_khatm_ghoran),
-            CallbackQueryHandler(khatm_selection, pattern="khatm_(zekr|salavat|ghoran)"),
-        ],
-        states={
-            ZEKR_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_zekr_text)],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-        per_message=False,
-    )
+    # --- هندلرهای دکمه (Callback Query) - اولویت بالا ---
+    # دکمه‌های مدیریت ذکر (حذف توسط ادمین)
+    app.add_handler(CallbackQueryHandler(handle_remove_zekr_click, pattern=r"^del_zekr_"))
+    
+    # دکمه‌های انتخاب ذکر (توسط کاربر برای ثبت)
+    app.add_handler(CallbackQueryHandler(handle_zekr_selection, pattern=r"^zekr_"))
+
+    # انتخاب نوع ختم (منوی تاپیک یا استارت)
+    app.add_handler(CallbackQueryHandler(khatm_selection, pattern="khatm_(zekr|salavat|ghoran)"))
+
+    # --- دستورات ---
     command_handlers = [
         CommandHandler("help", help_command),
         CommandHandler("start", start),
@@ -351,10 +345,20 @@ def register_handlers(app: Application):
         CommandHandler("khatm_status", khatm_status),
         CommandHandler("subtract", subtract_khatm),
         CommandHandler("set_completion_count", set_completion_count),
+        # دستورات شروع ختم
+        CommandHandler("khatm_zekr", start_khatm_zekr),
+        CommandHandler("khatm_salavat", start_khatm_salavat),
+        CommandHandler("khatm_ghoran", start_khatm_ghoran),
+        # دستورات جدید مدیریت ذکر
+        CommandHandler("add_zekr", add_zekr),
+        CommandHandler("remove_zekr", remove_zekr),
+        CommandHandler("list_zekrs", list_zekrs),
     ] + setup_handlers() + setup_dashboard_handlers()
-    app.add_handler(conv_handler)
+
     for handler in command_handlers:
         app.add_handler(handler)
+
+    # هندلرهای پیام
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_khatm_message))
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, handle_new_message), group=900)
     
