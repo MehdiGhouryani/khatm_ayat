@@ -4,6 +4,8 @@ import backoff
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ChatMemberHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatMember
 from telegram.ext import ContextTypes
+from typing import Optional
+
 
 # ایمپورت‌های به‌روز شده از هندلرها
 from bot.handlers.admin_handlers import (
@@ -395,30 +397,80 @@ async def shutdown(app: Application):
     await app.updater.stop()
     await close_db_connection()
 
-async def main():
-    await initialize_app()
 
+
+
+async def main():
+    """
+    ربات را راه‌اندازی، مقداردهی اولیه و شروع به کار می‌کند.
+    """
+    
+    # ۱. تمام کارهای راه‌اندازی async را انجام بده
+    # (فرض می‌کنم initialize_app تابع init_db() را صدا می‌زند که مهاجرت‌ها را اجرا می‌کند)
+    await initialize_app() 
+    
     setup_logging()
     map_handlers()
 
     app = Application.builder().token(TELEGRAM_TOKEN).build()
+    
+    # ۲. کارهای مربوط به app را انجام بده
     await generate_invite_links_for_all_groups(app.bot)
     register_handlers(app)
     register_jobs(app)
+    
+    # ۳. ربات را راه‌اندازی و شروع کن
     await app.initialize()
-    await app.updater.start_polling(allowed_updates=["message", "chat_member", "callback_query"], timeout=30, drop_pending_updates=True)
+    await app.updater.start_polling(
+        allowed_updates=["message", "chat_member", "callback_query"], 
+        timeout=30, 
+        drop_pending_updates=True
+    )
     await app.start()
-    try:
-        while True:
-            await asyncio.sleep(3600)
-    except KeyboardInterrupt:
-        await shutdown(app)
+    
+    logger.info("ربات با موفقیت شروع به کار کرد...")
+    
+    # ۴. خود اپلیکیشن را برگردان تا در بخش main قابل دسترس باشد
+    return app
+
+async def shutdown(app: Application):
+    """
+    توابع مورد نیاز برای خاموش کردن ربات را اجرا می‌کند.
+    """
+    # (این بخش را مطابق نیاز خودتان تغییر دهید)
+    logger.info("در حال اجرای توابع خاموش شدن...")
+    await app.stop()
+    await app.updater.stop()
+    await app.shutdown()
+    logger.info("خاموش شدن با موفقیت انجام شد.")
+
 
 if __name__ == "__main__":
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    app: Optional[Application] = None  # متغیر app را بیرون تعریف می‌کنیم
+    
     try:
-        loop.run_until_complete(main())
+        # ۵. تابع main را اجرا کن تا ربات راه‌اندازی شود و app را برگرداند
+        app = loop.run_until_complete(main())
+        
+        # ۶. حالا که ربات در حال اجراست، loop را به صورت دستی زنده نگه دار
+        loop.run_forever()
+        
+    except KeyboardInterrupt:
+        # ۷. وقتی Ctrl+C زده شد، run_forever متوقف می‌شود
+        logger.warning("دریافت سیگنال توقف (Ctrl+C)...")
+        
+    except Exception as e:
+        logger.error(f"خطای پیش‌بینی نشده در سطح اصلی: {e}", exc_info=True)
+
     finally:
+        # ۸. در هر صورت (خطا یا Ctrl+C)، ربات را خاموش کن
+        if app:
+            logger.info("در حال خاموش کردن ربات...")
+            loop.run_until_complete(shutdown(app)) 
+            
+        logger.info("درحال بستن event loop...")
         loop.run_until_complete(loop.shutdown_asyncgens())
         loop.close()
+        logger.info("ربات با موفقیت متوقف شد.")

@@ -513,13 +513,12 @@ async def khatm_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "❌ خطایی رخ داد. لطفاً دوباره تلاش کنید یا با ادمین تماس بگیرید."
             )
 
-
 @ignore_old_messages()
 async def start_khatm_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Start a new zekr khatm and clear any existing zekr items for this topic."""
     try:
         logger.info("Starting start_khatm_zekr: user_id=%s, chat_id=%s", 
-                   update.effective_user.id, update.effective_chat.id)
+                    update.effective_user.id, update.effective_chat.id)
 
         if not update.effective_chat or update.effective_chat.type not in ["group", "supergroup"]:
             logger.warning("start_khatm_zekr called in non-group chat: user_id=%s", update.effective_user.id)
@@ -536,7 +535,7 @@ async def start_khatm_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
         group = await fetch_one("SELECT is_active FROM groups WHERE group_id = ?", (group_id,))
         if not group or not group["is_active"]:
             logger.warning("Group not active for start_khatm_zekr: group_id=%s", group_id)
-            await update.message.reply_text("گروه فعال نیست. از `start` یا 'شروع' استفاده کنید.",parse_mode=constants.ParseMode.MARKDOWN)
+            await update.message.reply_text("گروه فعال نیست. از `start` یا 'شروع' استفاده کنید.", parse_mode=constants.ParseMode.MARKDOWN)
             return ConversationHandler.END
 
         context.user_data.clear()
@@ -544,7 +543,7 @@ async def start_khatm_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         old_khatm_type = await deactivate_current_khatm(group_id, topic_id)
         logger.info("Deactivated old khatm: group_id=%s, topic_id=%s, old_type=%s", 
-                   group_id, topic_id, old_khatm_type)
+                    group_id, topic_id, old_khatm_type)
 
         await execute(
             "DELETE FROM topic_zekrs WHERE group_id = ? AND topic_id = ?",
@@ -575,11 +574,10 @@ async def start_khatm_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         logger.error("Error in start_khatm_zekr: group_id=%s, topic_id=%s, error=%s",
-                    group_id, topic_id, e, exc_info=True)
+                     group_id, topic_id, e, exc_info=True)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
         context.user_data.clear()
         return ConversationHandler.END
-
 
 
 @ignore_old_messages()

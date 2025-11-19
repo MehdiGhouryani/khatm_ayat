@@ -6,7 +6,6 @@ from typing import Any, Dict, List, Optional
 from config.settings import DATABASE_PATH
 from datetime import datetime
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from bot.utils.constants import DEFAULT_COMPLETION_MESSAGE
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +36,117 @@ async def close_db_connection():
         _db_connection = None
         logger.info("Database connection closed")
 
+
+
+
+
+# این کد را در bot/database/db.py جایگزین تابع قبلی check_and_apply_migrations کنید
+
+async def check_and_apply_migrations():
+    """
+    (ناهمزمان) هر بار هنگام اجرای ربات، ساختار دیتابیس را چک کرده
+    و ستون‌های گمشده را بدون حذف داده‌ها اضافه می‌کند.
+    """
+    logger.info("در حال بررسی ساختار دیتابیس و اعمال مهاجرت‌ها (Async)...")
+    
+    async def get_columns(conn, table_name):
+        """یک تابع کمکی برای دریافت لیست ستون‌های فعلی یک جدول."""
+        try:
+            # این تابع اکنون به درستی کار خواهد کرد چون conn.row_factory تنظیم شده است
+            cursor = await conn.execute(f"PRAGMA table_info({table_name})")
+            rows = await cursor.fetchall()
+            await cursor.close()
+            # این خط دیگر خطا نمی‌دهد
+            return {row['name'] for row in rows}
+        except aiosqlite.OperationalError:
+            logger.debug(f"جدول '{table_name}' در زمان بررسی مهاجرت یافت نشد، schema.sql آن را خواهد ساخت.")
+            return set()
+        except TypeError as e:
+            logger.error(f"خطای TypeError در get_columns (آیا row_factory تنظیم شده؟): {e}", exc_info=True)
+            return set() # در صورت بروز خطا، مجموعه خالی برمی‌گردانیم
+
+    try:
+        # ما از یک اتصال async جدید برای اجرای مهاجرت استفاده می‌کنیم
+        async with aiosqlite.connect(DATABASE_PATH) as conn:
+            
+            # !!!!!!!!!!! راه‌حل اینجاست !!!!!!!!!!!
+            # این خط حیاتی، اتصال جدید ما را وادار می‌کند ردیف‌ها را
+            # به صورت دیکشنری برگرداند (مانند اتصال اصلی ربات)
+            conn.row_factory = aiosqlite.Row
+            # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+            # --- مهاجرت جدول 'contributions' (رفع باگ اصلی) ---
+            contrib_columns = await get_columns(conn, 'contributions')
+            if contrib_columns and 'zekr_id' not in contrib_columns:
+                logger.warning("مهاجرت: ستون 'zekr_id' در 'contributions' یافت نشد. در حال افزودن...")
+                try:
+                    await conn.execute("""
+                        ALTER TABLE contributions
+                        ADD COLUMN zekr_id INTEGER
+                        REFERENCES topic_zekrs(id) ON DELETE SET NULL
+                    """)
+                    logger.info("مهاجرت موفق: ستون 'zekr_id' (با Foreign Key) به 'contributions' اضافه شد.")
+                except aiosqlite.OperationalError as e:
+                    logger.warning(f"افزودن Foreign Key برای 'zekr_id' شکست خورد ({e}). در حال افزودن ستون ساده...")
+                    await conn.execute("ALTER TABLE contributions ADD COLUMN zekr_id INTEGER")
+                    logger.info("مهاجرت موفق: ستون 'zekr_id' (ساده) به 'contributions' اضافه شد.")
+                await conn.commit()
+
+            # --- مهاجرت جدول 'groups' ---
+            groups_columns = await get_columns(conn, 'groups')
+            if groups_columns:
+                migrations_applied = False
+                if 'min_display_verses' not in groups_columns:
+                    logger.warning("مهاجرت: ستون 'min_display_verses' در 'groups' یافت نشد. در حال افزودن...")
+                    await conn.execute("ALTER TABLE groups ADD COLUMN min_display_verses INTEGER DEFAULT 1")
+                    migrations_applied = True
+                
+                if 'invite_link' not in groups_columns:
+                    logger.warning("مهاجرت: ستون 'invite_link' در 'groups' یافت نشد. در حال افزودن...")
+                    await conn.execute("ALTER TABLE groups ADD COLUMN invite_link TEXT DEFAULT ''")
+                    migrations_applied = True
+
+                if 'title' not in groups_columns:
+                    logger.warning("مهاجرت: ستون 'title' در 'groups' یافت نشد. در حال افزودن...")
+                    await conn.execute("ALTER TABLE groups ADD COLUMN title TEXT DEFAULT ''")
+                    migrations_applied = True
+                
+                if migrations_applied:
+                    await conn.commit()
+                    logger.info("مهاجرت جدول 'groups' با موفقیت انجام شد.")
+
+            # --- مهاجرت جدول 'topics' ---
+            topics_columns = await get_columns(conn, 'topics')
+            if topics_columns:
+                migrations_applied = False
+                if 'is_completed' not in topics_columns:
+                    logger.warning("مهاجرت: ستون 'is_completed' در 'topics' یافت نشد. در حال افزودن...")
+                    await conn.execute("ALTER TABLE topics ADD COLUMN is_completed INTEGER DEFAULT 0")
+                    migrations_applied = True
+                
+                if 'created_at' not in topics_columns:
+                    logger.warning("مهاجرت: ستون 'created_at' در 'topics' یافت نشد. در حال افزودن...")
+                    await conn.execute("ALTER TABLE topics ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+                    migrations_applied = True
+
+                if 'updated_at' not in topics_columns:
+                    logger.warning("مهاجرت: ستون 'updated_at' در 'topics' یافت نشد. در حال افزودن...")
+                    await conn.execute("ALTER TABLE topics ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+                    migrations_applied = True
+                
+                if migrations_applied:
+                    await conn.commit()
+                    logger.info("مهاجرت جدول 'topics' با موفقیت انجام شد.")
+
+            logger.info("بررسی مهاجرت دیتابیس با موفقیت کامل شد.")
+
+    except aiosqlite.Error as e:
+        logger.error(f"خطای بحرانی در زمان اجرای مهاجرت دیتابیس: {e}", exc_info=True)
+        raise
+
+
+
+
 async def init_db():
     try:
         async with aiosqlite.connect(DATABASE_PATH) as conn:
@@ -44,6 +154,12 @@ async def init_db():
                 await conn.executescript(f.read())
             await conn.commit()
             logger.info("Database schema initialized successfully")
+
+
+
+        await check_and_apply_migrations()
+        
+        logger.info("مقداردهی اولیه دیتابیس و بررسی مهاجرت‌ها با موفقیت کامل شد.")
     except aiosqlite.Error as e:
         error_msg = str(e).lower()
         if "duplicate column name" in error_msg or "already exists" in error_msg:
@@ -955,7 +1071,7 @@ async def handle_set_zekr_text(cursor, request):
 
 
 
-async def handle_zekr_contribution(request: Dict[str, Any]):
+async def handle_zekr_contribution(self, request: Dict[str, Any]):
     """Handle zekr contribution database transaction and notification."""
     user_id = request['user_id']
     group_id = request['group_id']

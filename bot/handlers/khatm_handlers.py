@@ -315,20 +315,19 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
             keyboard = []
             for zekr in zekrs:
-                callback_data = f"zekr_sel_{user_msg_id}_{zekr['id']}"
-                keyboard.append([InlineKeyboardButton(zekr['text'], callback_data=callback_data)])
-            
+                if zekr and zekr.get('zekr_text'):
+                    callback_data = f"zekr_sel_{user_msg_id}_{zekr['id']}"
+                    keyboard.append([InlineKeyboardButton(zekr['zekr_text'], callback_data=callback_data)])
+
             keyboard.append([InlineKeyboardButton("❌ لغو", callback_data=f"zekr_cancel_{user_msg_id}")])
             reply_markup = InlineKeyboardMarkup(keyboard)
 
             await update.message.reply_text(
-                "ذکر شما برای کدام مورد ثبت شود؟",
-                reply_markup=reply_markup,
-                reply_parameters=ReplyParameters(message_id=user_msg_id)
+            	"ذکر شما برای کدام مورد ثبت شود؟",
+            	reply_markup=reply_markup,
+            	reply_parameters=ReplyParameters(message_id=user_msg_id)
             )
             return
-
-
 
 
         elif topic["khatm_type"] not in ["ghoran", "salavat", "zekr"]: #
