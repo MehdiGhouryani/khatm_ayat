@@ -1191,8 +1191,8 @@ async def handle_zekr_contribution(cursor, request: Dict[str, Any]):
                         parse_mode="HTML" # تغییر به HTML برای استایل جدید
                     )
                     # حذف خودکار
-                    await asyncio.sleep(15) # زمان حذف (قابل تنظیم با تنظیمات گروه)
-                    await sent_msg.delete()
+                    # await asyncio.sleep(15) # زمان حذف (قابل تنظیم با تنظیمات گروه)
+                    # await sent_msg.delete()
                 except Exception as ex:
                     logger.error(f"Failed to send/delete zekr notification: {ex}")
 
