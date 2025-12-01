@@ -1156,7 +1156,7 @@ async def handle_zekr_contribution(cursor, request: Dict[str, Any]):
     # ارسال پیام تایید به گروه (فقط اگر bot وجود داشته باشد)
     if bot and chat_id and zekr_row:
         zekr_text = zekr_row['zekr_text']
-        # zekr_total = zekr_row['current_total'] # اگر نیاز بود در پیام باشد
+        zekr_total = zekr_row['current_total'] # اگر نیاز بود در پیام باشد
         topic_total = topic_row['current_total'] if topic_row else 0
         
         # --- ساخت پیام مشابه صلوات ---
@@ -1167,7 +1167,7 @@ async def handle_zekr_contribution(cursor, request: Dict[str, Any]):
         # خط اول: ۱۰۰ ذکر (سبحان الله) ثبت شد!
         line1 = f"<b>{abs_amount:,} ذکر ({html.escape(zekr_text)}) {action_text}!</b>"
         # خط دوم: جمع کل
-        line2 = f"<b>جمع کل: {topic_total:,}</b>"
+        line2 = f"<b>جمع کل: {zekr_total:,}</b>"
         
         message_parts = [line1, line2]
         
