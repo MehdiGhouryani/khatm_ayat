@@ -1071,8 +1071,11 @@ async def handle_set_zekr_text(cursor, request):
 
 
 
-async def handle_zekr_contribution(self, request: Dict[str, Any]):
+# این تابع را جایگزین تابع فعلی handle_zekr_contribution در خط 839 کنید
+async def handle_zekr_contribution(cursor, request: Dict[str, Any]):
     """Handle zekr contribution database transaction and notification."""
+    import html  # برای ایمنی متن‌ها در حالت HTML
+
     user_id = request['user_id']
     group_id = request['group_id']
     topic_id = request['topic_id']
@@ -1084,75 +1087,124 @@ async def handle_zekr_contribution(self, request: Dict[str, Any]):
     chat_id = request.get('chat_id')
     thread_id = request.get('thread_id')
 
+    # توجه: در این ساختار، cursor از بیرون پاس داده می‌شود و ما داخل یک تراکنش هستیم
+    # بنابراین برای عملیات دیتابیس از همان cursor استفاده می‌کنیم
+    
+    # 1. اطمینان از وجود کاربر
+    await cursor.execute(
+        "INSERT OR IGNORE INTO users (user_id, group_id, topic_id, username, first_name, total_salavat, total_zekr, total_ayat) VALUES (?, ?, ?, ?, ?, 0, 0, 0)",
+        (user_id, group_id, topic_id, username, first_name)
+    )
+
+    # 2. ثبت مشارکت
+    await cursor.execute(
+        "INSERT INTO contributions (user_id, group_id, topic_id, amount, zekr_id) VALUES (?, ?, ?, ?, ?)",
+        (user_id, group_id, topic_id, amount, zekr_id)
+    )
+
+    # 3. آپدیت آمار کاربر
+    await cursor.execute(
+        "UPDATE users SET total_zekr = total_zekr + ? WHERE user_id = ? AND group_id = ? AND topic_id = ?",
+        (amount, user_id, group_id, topic_id)
+    )
+    
+    # 4. آپدیت آمار ذکر خاص
+    await cursor.execute(
+        "UPDATE topic_zekrs SET current_total = current_total + ? WHERE id = ?",
+        (amount, zekr_id)
+    )
+
+    # 5. آپدیت آمار کل تاپیک
+    await cursor.execute(
+        "UPDATE topics SET current_total = current_total + ? WHERE group_id = ? AND topic_id = ?",
+        (amount, group_id, topic_id)
+    )
+
+    # دریافت اطلاعات برای نمایش پیام
+    # نکته: چون cursor فعلی درگیر نوشتن است، برای خواندن مشکلی ندارد اما برای اطمینان
+    # مقادیر را پس از آپدیت‌ها می‌خوانیم
+    
+    # خواندن نام ذکر و تعدادش
+    await cursor.execute("SELECT zekr_text, current_total FROM topic_zekrs WHERE id = ?", (zekr_id,))
+    zekr_row = await cursor.fetchone()
+    
+    # خواندن مجموع کل
+    await cursor.execute("SELECT current_total FROM topics WHERE group_id = ? AND topic_id = ?", (group_id, topic_id))
+    topic_row = await cursor.fetchone()
+
+    # خواندن متن سپاس (انتخاب تصادفی از دیتابیس)
+    sepas_text = None
     try:
-        async with aiosqlite.connect(DATABASE_PATH) as db:
-            # 1. اطمینان از وجود کاربر (چون در هندلر اصلی ممکن است رد شده باشد)
-            await db.execute(
-                "INSERT OR IGNORE INTO users (user_id, group_id, topic_id, username, first_name, total_salavat, total_zekr, total_ayat) VALUES (?, ?, ?, ?, ?, 0, 0, 0)",
-                (user_id, group_id, topic_id, username, first_name)
-            )
-
-            # 2. ثبت مشارکت در جدول contributions
-            await db.execute(
-                "INSERT INTO contributions (user_id, group_id, topic_id, amount, zekr_id) VALUES (?, ?, ?, ?, ?)",
-                (user_id, group_id, topic_id, amount, zekr_id)
-            )
-
-            # 3. آپدیت آمار کاربر
-            await db.execute(
-                "UPDATE users SET total_zekr = total_zekr + ? WHERE user_id = ? AND group_id = ? AND topic_id = ?",
-                (amount, user_id, group_id, topic_id)
-            )
-            
-            # 4. آپدیت آمار آن ذکر خاص
-            await db.execute(
-                "UPDATE topic_zekrs SET current_total = current_total + ? WHERE id = ?",
-                (amount, zekr_id)
-            )
-
-            # 5. آپدیت آمار کل تاپیک
-            await db.execute(
-                "UPDATE topics SET current_total = current_total + ? WHERE group_id = ? AND topic_id = ?",
-                (amount, group_id, topic_id)
-            )
-
-            await db.commit()
-            
-            # دریافت اطلاعات به‌روز شده برای نمایش در پیام
-            async with db.execute("SELECT zekr_text, current_total FROM topic_zekrs WHERE id = ?", (zekr_id,)) as cursor:
-                zekr_row = await cursor.fetchone()
-            
-            async with db.execute("SELECT current_total FROM topics WHERE group_id = ? AND topic_id = ?", (group_id, topic_id)) as cursor:
-                topic_row = await cursor.fetchone()
-
-        # ارسال پیام تایید به گروه
-        if bot and chat_id and zekr_row:
-            zekr_text = zekr_row[0]
-            zekr_total = zekr_row[1]
-            topic_total = topic_row[0] if topic_row else 0
-            
-            message = (
-                f"✅ **{amount}** {zekr_text} ثبت شد.\n"
-                f"👤 **ذاکر:** {first_name}\n"
-                f"📊 **تعداد این ذکر:** {zekr_total:,}\n"
-                f"🔢 **مجموع کل:** {topic_total:,}"
-            )
-            
-            try:
-                sent_message = await bot.send_message(
-                    chat_id=chat_id,
-                    text=message,
-                    message_thread_id=thread_id,
-                    parse_mode="Markdown"
-                )
-                # حذف پیام پس از مدتی (اختیاری - مشابه رفتار قبلی)
-                await asyncio.sleep(15)
-                await sent_message.delete()
-            except Exception as e:
-                logger.error("Failed to send zekr confirmation message: %s", e)
-
+        # چک کردن آیا سپاس فعال است؟
+        await cursor.execute("SELECT sepas_enabled FROM groups WHERE group_id = ?", (group_id,))
+        group_sepas = await cursor.fetchone()
+        
+        if group_sepas and group_sepas['sepas_enabled']:
+            # دریافت یک متن تصادفی
+            await cursor.execute("""
+                SELECT text FROM sepas_texts 
+                WHERE (group_id = ? OR is_default = 1) 
+                ORDER BY RANDOM() LIMIT 1
+            """, (group_id,))
+            sepas_row = await cursor.fetchone()
+            if sepas_row:
+                sepas_text = sepas_row['text']
     except Exception as e:
-        logger.error(f"Error in handle_zekr_contribution: {e}", exc_info=True)
+        logger.warning(f"Error fetching sepas text inside db: {e}")
+
+
+    # ارسال پیام تایید به گروه (فقط اگر bot وجود داشته باشد)
+    if bot and chat_id and zekr_row:
+        zekr_text = zekr_row['zekr_text']
+        # zekr_total = zekr_row['current_total'] # اگر نیاز بود در پیام باشد
+        topic_total = topic_row['current_total'] if topic_row else 0
+        
+        # --- ساخت پیام مشابه صلوات ---
+        separator = "➖➖➖➖➖➖➖➖"
+        action_text = "ثبت شد" if amount >= 0 else "کسر شد"
+        abs_amount = abs(amount)
+        
+        # خط اول: ۱۰۰ ذکر (سبحان الله) ثبت شد!
+        line1 = f"<b>{abs_amount:,} ذکر ({html.escape(zekr_text)}) {action_text}!</b>"
+        # خط دوم: جمع کل
+        line2 = f"<b>جمع کل: {topic_total:,}</b>"
+        
+        message_parts = [line1, line2]
+        
+        # خط‌کش و متن سپاس
+        message_parts.append(separator)
+        if sepas_text:
+            message_parts.append(f"<b>{html.escape(sepas_text)} 🌱</b>")
+        else:
+            message_parts.append("<b>🌱 التماس دعا 🌱</b>")
+            
+        final_message = "\n".join(message_parts)
+        
+        try:
+            # استفاده از create_task برای اینکه منتظر ارسال نمانیم و دیتابیس قفل نشود
+            async def send_notification():
+                try:
+                    sent_msg = await bot.send_message(
+                        chat_id=chat_id,
+                        text=final_message,
+                        message_thread_id=thread_id,
+                        parse_mode="HTML" # تغییر به HTML برای استایل جدید
+                    )
+                    # حذف خودکار
+                    await asyncio.sleep(15) # زمان حذف (قابل تنظیم با تنظیمات گروه)
+                    await sent_msg.delete()
+                except Exception as ex:
+                    logger.error(f"Failed to send/delete zekr notification: {ex}")
+
+            asyncio.create_task(send_notification())
+            
+        except Exception as e:
+            logger.error("Failed to initiate zekr confirmation message task: %s", e)
+
+
+
+
+
 
 
 async def process_queue_request(request: Dict[str, Any]) -> None:
