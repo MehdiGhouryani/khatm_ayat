@@ -1,68 +1,73 @@
 import sqlite3
+import os
 
-DB_PATH = "bot.db"
-
-# لیست گروه‌هایی که در لاگ ارور داده‌اند
-BAD_GROUPS = [
-    -1003165641310, # Chat not found
-    -1003086499196, # Chat not found
-    -1002945552819, # Chat not found
-    -1002687739294, # Not enough rights
-    -1002655364407, # Not enough rights
-    -1002646881131, # Not enough rights
-    -1002527451082, # Not enough rights
-    -1002418192967, # Chat not found
-    -1002105708239, # Not enough rights
-    -5075384381,    # Not enough rights
-    -4993388081,    # Not enough rights
-    -4955743823,    # Forbidden
-    -4931062746,    # Not enough rights
-    -4907173889,    # Not enough rights
-    -4807269622,    # Forbidden
-    -4607665006,    # Not enough rights
+# تلاش برای پیدا کردن فایل دیتابیس در پوشه جاری یا پوشه‌های والد
+POSSIBLE_PATHS = [
+    "bot.db",
+    "khatm.db",
+    "/public_html/khatm_ayat/bot.db",
+    "../bot.db"
 ]
 
-# گروه‌هایی که تغییر ID داده‌اند (Migrated)
-MIGRATED_GROUPS = {
-    -4964230569: -1003165641310,
-    -4902839150: -1002935045396,
-    -4886411990: -1002960690770,
-    -4812687122: -1003328262510
-}
+def find_database():
+    for path in POSSIBLE_PATHS:
+        if os.path.exists(path):
+            return path
+    return None
 
-def clean_database():
-    conn = sqlite3.connect(DB_PATH)
+def fix_database():
+    db_path = find_database()
+    if not db_path:
+        print("❌ فایل دیتابیس پیدا نشد! لطفا فایل را کنار main.py قرار دهید.")
+        return
+
+    print(f"🔧 دیتابیس پیدا شد: {db_path}")
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    
-    print("🧹 شروع پاکسازی گروه‌ها...")
 
     try:
-        # 1. حذف/غیرفعال کردن گروه‌های خراب
-        for gid in BAD_GROUPS:
-            cursor.execute("UPDATE groups SET is_active = 0 WHERE group_id = ?", (gid,))
-            print(f"🚫 گروه {gid} غیرفعال شد.")
+        print("1️⃣ شروع پاکسازی تریگرهای خراب...")
+        # گرفتن همه تریگرها
+        cursor.execute("SELECT name, sql FROM sqlite_master WHERE type='trigger'")
+        all_triggers = cursor.fetchall()
+        
+        deleted_count = 0
+        for name, sql in all_triggers:
+            # اگر تریگر به جدول temp اشاره می‌کند
+            if "topics_old_temp" in str(sql):
+                print(f"   🗑 حذف تریگر خراب: {name}")
+                cursor.execute(f"DROP TRIGGER IF EXISTS {name}")
+                deleted_count += 1
+        
+        # اگر تریگر خاصی (مثل update_topics_timestamp) مشکل‌ساز است، آن را بازسازی می‌کنیم
+        cursor.execute("DROP TRIGGER IF EXISTS update_topics_timestamp")
+        print("   🔄 تریگر update_topics_timestamp حذف شد (برای بازسازی).")
+        
+        # ساخت مجدد تریگر سالم
+        cursor.execute("""
+        CREATE TRIGGER IF NOT EXISTS update_topics_timestamp
+        AFTER UPDATE ON topics
+        FOR EACH ROW
+        BEGIN
+            UPDATE topics SET updated_at = CURRENT_TIMESTAMP
+            WHERE group_id = OLD.group_id AND topic_id = OLD.topic_id;
+        END;
+        """)
+        print("   ✅ تریگر سالم update_topics_timestamp ساخته شد.")
 
-        # 2. آپدیت گروه‌های منتقل شده
-        for old_id, new_id in MIGRATED_GROUPS.items():
-            # چک کنیم اگر گروه جدید وجود ندارد، آیدی قدیم را آپدیت کنیم
-            cursor.execute("SELECT 1 FROM groups WHERE group_id = ?", (new_id,))
-            if not cursor.fetchone():
-                cursor.execute("UPDATE groups SET group_id = ? WHERE group_id = ?", (new_id, old_id))
-                cursor.execute("UPDATE topics SET group_id = ? WHERE group_id = ?", (new_id, old_id))
-                # سایر جداول وابسته هم باید آپدیت شوند (users, contributions, ...)
-                print(f"🔄 گروه {old_id} به {new_id} منتقل شد.")
-            else:
-                # اگر گروه جدید قبلاً هست، قدیمی را حذف می‌کنیم
-                cursor.execute("DELETE FROM groups WHERE group_id = ?", (old_id,))
-                print(f"🗑 گروه قدیمی {old_id} حذف شد (نسخه جدید موجود است).")
+        if deleted_count > 0:
+            print(f"🎉 {deleted_count} تریگر خراب دیگر هم پاک شد.")
+        else:
+            print("✅ تریگر خراب دیگری یافت نشد.")
 
         conn.commit()
-        print("✅ پاکسازی تمام شد.")
+        print("✅ عملیات تعمیر دیتابیس با موفقیت تمام شد.")
 
     except Exception as e:
         print(f"❌ خطا: {e}")
+        conn.rollback()
     finally:
         conn.close()
 
 if __name__ == "__main__":
-    clean_database()
+    fix_database()
