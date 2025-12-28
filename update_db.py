@@ -1,27 +1,28 @@
 import sqlite3
 import os
 
-# مسیر دقیق دیتابیس شما
-DATABASE_PATH = "/public_html/khatm_ayat/bot.db"
-
 def fix_database_triggers():
-    print(f"🔧 در حال اتصال به دیتابیس در مسیر: {DATABASE_PATH}")
+    # 1. تعریف مسیر در ابتدای تابع برای جلوگیری از خطا
+    target_db_path = "/public_html/khatm_ayat/bot.db"
     
-    # بررسی وجود فایل قبل از اتصال
-    if not os.path.exists(DATABASE_PATH):
-        # تلاش برای مسیر نسبی اگر مسیر کامل پیدا نشد
+    # بررسی وجود فایل و اصلاح مسیر در صورت نیاز
+    if not os.path.exists(target_db_path):
         if os.path.exists("bot.db"):
-            DATABASE_PATH = "bot.db"
-            print(f"⚠️ مسیر کامل یافت نشد، استفاده از مسیر نسبی: {DATABASE_PATH}")
-        else:
-            print("❌ فایل دیتابیس پیدا نشد! لطفاً مسیر را بررسی کنید.")
-            return
+            target_db_path = "bot.db"
+            print(f"⚠️ مسیر کامل یافت نشد، استفاده از مسیر نسبی: {target_db_path}")
+        # اگر فایل کلا پیدا نشد، پایین‌تر ارور میدهیم
 
-    conn = sqlite3.connect(DATABASE_PATH)
+    print(f"🔧 در حال اتصال به دیتابیس در مسیر : {target_db_path}")
+
+    if not os.path.exists(target_db_path):
+        print(f"❌ فایل دیتابیس در مسیر زیر پیدا نشد:\n{target_db_path}")
+        return
+
+    conn = sqlite3.connect(target_db_path)
     cursor = conn.cursor()
 
     try:
-        # 1. پیدا کردن تریگرهای خراب (تریگرهایی که به topics_old_temp اشاره دارند)
+        # 2. پیدا کردن تریگرهای خراب
         print("🔍 در حال جستجوی تریگرهای خراب...")
         cursor.execute("SELECT name, sql FROM sqlite_master WHERE type = 'trigger'")
         all_triggers = cursor.fetchall()
@@ -32,7 +33,7 @@ def fix_database_triggers():
                 broken_triggers.append(name)
         
         if not broken_triggers:
-            print("✅ هیچ تریگر خرابی پیدا نشد. دیتابیس سالم به نظر می‌رسد.")
+            print("✅ هیچ تریگر خرابی پیدا نشد.")
         else:
             print(f"⚠️ تعداد {len(broken_triggers)} تریگر خراب پیدا شد.")
             for trigger_name in broken_triggers:
@@ -42,7 +43,7 @@ def fix_database_triggers():
             conn.commit()
             print("🎉 تمام تریگرهای خراب با موفقیت حذف شدند.")
 
-        # 2. پاکسازی نهایی (حذف جدول موقت اگر باقی مانده باشد)
+        # 3. پاکسازی نهایی
         cursor.execute("DROP TABLE IF EXISTS topics_old_temp")
         conn.commit()
         print("🧹 پاکسازی نهایی انجام شد.")
