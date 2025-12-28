@@ -728,34 +728,39 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
 async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle subtraction of khatm contributions by admin."""
     try:
-        # 1. بررسی‌های اولیه
+        # 1. بررسی‌های اولیه: آیا در گروه هستیم؟
         if not update.effective_chat or update.effective_chat.type not in ["group", "supergroup"]:
             return
 
         group_id = update.effective_chat.id
         topic_id = update.message.message_thread_id or group_id
         
+        # 2. بررسی دسترسی ادمین
         if not await is_admin(update, context):
             await update.message.reply_text("❌ فقط ادمین می‌تواند مشارکت را کاهش دهد.")
             return
 
-        # 2. دریافت و پارس کردن عدد
+        # 3. دریافت عدد از پیام (مثلاً -1 یا subtract 1)
         raw_text = update.message.text.strip()
         number = None
+        
+        # تلاش برای خواندن عدد از آرگومان‌ها
         if context.args:
             number = parse_number(context.args[0])
+        
+        # اگر عدد پیدا نشد، تلاش برای خواندن از کل متن
         if number is None:
-            # هندل کردن حالت‌های مختلف مثل /subtract 50 یا -50
             clean_text = raw_text.replace("/subtract", "").replace("کاهش", "").strip()
             number = parse_number(clean_text)
         
         if number is None:
-            await update.message.reply_text("📝 لطفاً یک عدد معتبر وارد کنید (مثال: -50).")
+            await update.message.reply_text("📝 لطفاً یک عدد معتبر وارد کنید (مثال: -1).")
             return
 
-        number = abs(number) # مطمئن می‌شویم عدد برای محاسبات مثبت است (بعداً منفی‌اش می‌کنیم)
+        # برای محاسبات، قدر مطلق (مثبت) عدد را می‌گیریم
+        number = abs(number)
 
-        # 3. دریافت اطلاعات تاپیک
+        # 4. دریافت اطلاعات تاپیک از دیتابیس
         topic = await fetch_one(
             """
             SELECT khatm_type, current_total, zekr_text, min_ayat, max_ayat, 
@@ -769,33 +774,35 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ تاپیک فعال یافت نشد.")
             return
 
-        # ---------------------------------------------------------------------
-        # ✅ بخش اصلاح شده: مدیریت اختصاصی ادعیه (نمایش مستقیم دکمه‌ها)
-        # ---------------------------------------------------------------------
+        # =====================================================================
+        # 🔴 بخش ویژه برای ادعیه و زیارات (DOA)
+        # اینجا مسیر را کاملاً جدا می‌کنیم تا قاطی نکند
+        # =====================================================================
         if topic["khatm_type"] == "doa":
-            # دریافت لیست دعاها
+            # الف) دریافت لیست دعاها
             items = await fetch_all(
                 "SELECT id, title, category FROM doa_items WHERE group_id = ? AND topic_id = ?",
                 (group_id, topic_id)
             )
             
             if not items:
-                await update.message.reply_text("❌ هیچ دعایی تعریف نشده است.")
+                await update.message.reply_text("❌ هیچ دعایی در این تاپیک تعریف نشده است.")
                 return
 
-            # ذخیره درخواست در حافظه (با عدد منفی)
+            # ب) ذخیره اطلاعات در حافظه (amount را منفی ذخیره می‌کنیم)
             user_msg_id = update.message.message_id
             if 'pending_doa' not in context.chat_data:
                 context.chat_data['pending_doa'] = {}
                 
             context.chat_data['pending_doa'][user_msg_id] = {
                 "user_id": update.effective_user.id,
-                "amount": -number,  # <--- نکته مهم: اینجا عدد را منفی ذخیره می‌کنیم
+                "amount": -number,  # <--- نکته کلیدی: عدد منفی ذخیره می‌شود
                 "username": update.effective_user.username,
-                "first_name": update.effective_user.first_name
+                "first_name": update.effective_user.first_name,
+                "is_subtraction": True # برای اطمینان بیشتر
             }
 
-            # ساخت دکمه‌ها (دقیقاً مثل تابع اصلی)
+            # ج) ساخت دکمه‌های شیشه‌ای (دو ستونه: زیارت | دعا)
             ziyarats = [i for i in items if i['category'] == 'ziyarat']
             duas = [i for i in items if i['category'] == 'doa']
             
@@ -810,6 +817,7 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     cb_data = f"doa_sel_{user_msg_id}_{item['id']}"
                     row.append(InlineKeyboardButton(f"🕌 {item['title']}", callback_data=cb_data))
                 else:
+                    # دکمه خالی برای حفظ چیدمان
                     row.append(InlineKeyboardButton(" ", callback_data="noop"))
                 
                 # ستون راست: دعا
@@ -822,22 +830,34 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 keyboard.append(row)
 
+            # دکمه لغو
             keyboard.append([InlineKeyboardButton("❌ لغو", callback_data=f"doa_cancel_{user_msg_id}")])
             
+            # د) ارسال پیام و خروج
             await update.message.reply_text(
-                f"🔻 کسر {number} عدد.\nاز کدام مورد کم شود؟",
-                reply_markup=InlineKeyboardMarkup(keyboard)
+                f"🔻 درخواست کسر **{number}** عدد.\n"
+                "لطفاً انتخاب کنید از کدام مورد کم شود:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode=ParseMode.MARKDOWN
             )
-            return  # <--- خروج فوری برای جلوگیری از اجرای کدهای پایین
-        # ---------------------------------------------------------------------
+            return  # <--- خروج اجباری: اجازه نمی‌دهیم کدهای پایین اجرا شوند
+        
+        # =====================================================================
+        # پایان بخش ویژه ادعیه
+        # =====================================================================
 
 
-        # 4. ادامه منطق برای سایر ختم‌ها (صلوات، ذکر، قرآن)
+        # 5. منطق عادی برای سایر ختم‌ها (صلوات، ذکر، قرآن)
+        # (این بخش فقط زمانی اجرا می‌شود که نوع ختم "doa" نباشد)
+        
         user_id = update.effective_user.id
         
-        # دریافت آمار کاربر
+        # بررسی موجودی کاربر
         user = await fetch_one(
-            "SELECT total_salavat, total_zekr, total_ayat FROM users WHERE user_id = ? AND group_id = ? AND topic_id = ?",
+            """
+            SELECT total_salavat, total_zekr, total_ayat 
+            FROM users WHERE user_id = ? AND group_id = ? AND topic_id = ?
+            """,
             (user_id, group_id, topic_id)
         )
         
@@ -847,17 +867,18 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif topic["khatm_type"] == "zekr": user_total = user["total_zekr"]
             elif topic["khatm_type"] == "ghoran": user_total = user["total_ayat"]
 
+        # اگر موجودی کمتر از مقدار کسر بود، خطا بده
         if user_total < number:
             await update.message.reply_text(f"❌ موجودی شما ({user_total}) کمتر از مقدار کسر ({number}) است.")
             return
 
-        # ثبت در صف دیتابیس
+        # ثبت تراکنش کسر در دیتابیس
         request = {
             "type": "contribution",
             "group_id": group_id,
             "topic_id": topic_id,
             "user_id": user_id,
-            "amount": -number,
+            "amount": -number, # کسر مقدار
             "khatm_type": topic["khatm_type"],
             "completed": False,
         }
@@ -868,19 +889,36 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await write_queue.put(request)
 
-        # نمایش پیام
+        # نمایش پیام نتیجه
         new_total = topic["current_total"] - number
         sepas_text = await get_random_sepas(group_id)
+        
+        # دریافت تنظیمات گروه برای نمایش
+        group = await fetch_one("SELECT max_display_verses FROM groups WHERE group_id = ?", (group_id,))
+        max_display = group["max_display_verses"] if group else 10
+
         msg = await format_khatm_message(
-            topic["khatm_type"], topic["current_total"], -number, new_total, sepas_text, group_id,
+            topic["khatm_type"],
+            topic["current_total"],
+            -number,
+            new_total,
+            sepas_text,
+            group_id,
             topic["zekr_text"] if topic["khatm_type"] in ["zekr", "salavat"] else None,
-            max_display_verses=10, completion_count=topic["completion_count"]
+            max_display_verses=max_display,
+            completion_count=topic["completion_count"]
         )
+
         await reply_text_and_schedule_deletion(update, context, msg, parse_mode=ParseMode.HTML)
 
     except Exception as e:
         logger.error(f"Error in subtract_khatm: {e}", exc_info=True)
-        await update.message.reply_text("❌ خطا در عملیات.")
+        # خطا را به کاربر نشان نده که گیج شود، فقط لاگ کن و یک پیام ساده بده
+        try:
+            await update.message.reply_text("❌ خطا در انجام عملیات.")
+        except:
+            pass
+
 
 
 
