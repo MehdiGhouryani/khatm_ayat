@@ -1295,19 +1295,19 @@ async def handle_zekr_selection(update: Update, context: ContextTypes.DEFAULT_TY
 # -------------------------------------------------------------------------
 # هندلر پردازش کلیک روی دکمه‌های ادعیه و زیارات
 # -------------------------------------------------------------------------
+
 @log_function_call
 async def handle_doa_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    data = query.data # فرمت: doa_sel_MSGID_ITEMID
+    data = query.data 
     parts = data.split('_')
     
-    # بررسی فرمت دیتا
     if len(parts) < 3:
         return
 
-    action = parts[1] # sel یا cancel
+    action = parts[1] 
     msg_id = int(parts[2])
     
     # --- حالت لغو ---
@@ -1322,36 +1322,34 @@ async def handle_doa_selection(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     item_id = int(parts[3])
     
-    # بازیابی اطلاعات (عدد کاربر) از حافظه موقت
     pending_data = context.chat_data.get('pending_doa', {}).get(msg_id)
     
     if not pending_data:
-        await query.message.edit_text("❌ زمان انتخاب منقضی شده یا اطلاعات یافت نشد.")
+        try:
+            await query.message.edit_text("❌ زمان انتخاب منقضی شده یا اطلاعات یافت نشد.")
+        except:
+            await query.message.delete()
         return
 
-    # چک کردن اینکه آیا همان کاربری که عدد فرستاده کلیک کرده؟
     if query.from_user.id != pending_data['user_id']:
         await query.answer("⛔️ این دکمه مربوط به پیام شما نیست!", show_alert=True)
         return
 
     amount = pending_data['amount']
     group_id = query.message.chat.id
-    # در سوپرگروه‌های فروم‌دار، تاپیک مهم است
     topic_id = query.message.message_thread_id if query.message.is_topic_message else group_id
     
-    # 1. آپدیت آمار آیتم خاص (در جدول doa_items)
+    # 1. آپدیت دیتابیس
     await execute(
         "UPDATE doa_items SET current_total = current_total + ? WHERE id = ?",
         (amount, item_id)
     )
-    
-    # 2. آپدیت آمار کلی تاپیک (در جدول topics)
     await execute(
         "UPDATE topics SET current_total = current_total + ? WHERE group_id = ? AND topic_id = ?",
         (amount, group_id, topic_id)
     )
     
-    # 3. دریافت اطلاعات جدید برای نمایش در پیام
+    # 2. دریافت اطلاعات جدید
     item_info = await fetch_one("SELECT title, link, current_total FROM doa_items WHERE id = ?", (item_id,))
     total_topic = await fetch_one("SELECT current_total FROM topics WHERE group_id = ? AND topic_id = ?", (group_id, topic_id))
     
@@ -1366,24 +1364,27 @@ async def handle_doa_selection(update: Update, context: ContextTypes.DEFAULT_TYP
     
     sepas = await get_random_sepas(group_id)
     
-    # ساخت لینک (اگر لینک وجود داشته باشد)
-    link_text = ""
-    if link:
-        link_text = f"🔗 <a href='{link}'>مشاهده متن {title}</a>\n➖➖➖➖➖➖➖➖"
+    # --- 3. ساخت متن پیام طبق سلیقه کارفرما ---
     
+    # ساخت بخش لینک
+    link_section = ""
+    if link:
+        link_section = f"<a href='{link}'>مشاهده متن {title}</a>\n➖➖➖➖➖➖➖➖\n"
+    
+    # قالب نهایی (کل متن بولد شده)
     response_text = (
-        f"✅ <b>{amount}</b> بار <b>{title}</b> ثبت شد!\n"
-        f"📊 آمار {title}: <b>{new_item_total:,}</b>\n"
-        f"📚 آمار کل گروه: <b>{new_topic_total:,}</b>\n"
-        "➖➖➖➖➖➖➖➖\n"
-        f"{link_text}\n"
-        f"🌱 <i>{sepas}</i>"
+        f"<b>{amount} بار {title} ثبت شد!\n"
+        f"آمار {title} : {new_item_total:,}\n"
+        f"آمار کل گروه : {new_topic_total:,}\n"
+        f"➖➖➖➖➖➖➖➖\n"
+        f"{link_section}"
+        f"{sepas} 🌱</b>"
     )
     
     # حذف دکمه‌ها
     await query.message.delete()
     
-    # ارسال پیام تایید نهایی
+    # ارسال پیام
     await context.bot.send_message(
         chat_id=group_id,
         text=response_text,
@@ -1392,5 +1393,4 @@ async def handle_doa_selection(update: Update, context: ContextTypes.DEFAULT_TYP
         disable_web_page_preview=True
     )
     
-    # پاک کردن دیتا از حافظه
     context.chat_data['pending_doa'].pop(msg_id, None)
