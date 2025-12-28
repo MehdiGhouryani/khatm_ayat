@@ -392,13 +392,6 @@ def register_handlers(app: Application):
     # 3. دستور حذف آیتم توسط ادمین
     app.add_handler(CommandHandler("del_doa", start_remove_doa_item))
 
-    # 4. هندلرهای متنی برای مراحل افزودن و حذف (با group متفاوت برای جلوگیری از تداخل)
-    # group=10: برای مراحل افزودن
-    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS, process_doa_setup), group=10)
-    # group=11: برای مراحل حذف
-    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS, process_doa_removal), group=11)
-
-    # ---------------------------------------------------------
 
 
     app.add_handler(ChatMemberHandler(chat_member_handler, ChatMemberHandler.CHAT_MEMBER))

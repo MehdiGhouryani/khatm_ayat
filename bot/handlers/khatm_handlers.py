@@ -11,7 +11,7 @@ from telegram.error import TimedOut
 from bot.database.db import fetch_one, write_queue, fetch_all, execute
 from bot.utils.helpers import parse_number, format_khatm_message, get_random_sepas, reply_text_and_schedule_deletion, ignore_old_messages
 from bot.utils.quran import QuranManager
-from bot.handlers.admin_handlers import is_admin, TEXT_COMMANDS,process_doa_setup
+from bot.handlers.admin_handlers import is_admin, TEXT_COMMANDS,process_doa_setup,process_doa_removal
 from telegram.constants import ParseMode
 logger = logging.getLogger(__name__)
 
@@ -34,9 +34,10 @@ def log_function_call(func):
 async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle khatm-related messages for salavat, zekr, or Quran contributions."""
     try:
+        if await process_doa_removal(update, context):
+            return
         if await process_doa_setup(update, context):
             return
-        # -----------------
 
         is_admin_user = await is_admin(update, context)
 
