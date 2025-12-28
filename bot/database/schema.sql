@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS topics (
     is_completed INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    max_number INTEGER DEFAULT NULL,
+    min_number INTEGER DEFAULT NULL,
     PRIMARY KEY (group_id, topic_id),
     FOREIGN KEY (group_id) REFERENCES groups(group_id)
 );
