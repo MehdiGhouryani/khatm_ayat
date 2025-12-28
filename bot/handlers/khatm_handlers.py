@@ -728,62 +728,34 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
 async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle subtraction of khatm contributions by admin."""
     try:
+        # 1. بررسی‌های اولیه
         if not update.effective_chat or update.effective_chat.type not in ["group", "supergroup"]:
-            logger.debug("Subtract command in non-group chat: user_id=%s", update.effective_user.id)
             return
 
         group_id = update.effective_chat.id
         topic_id = update.message.message_thread_id or group_id
-        raw_text = update.message.text.strip()
-        logger.debug("Processing subtract command: group_id=%s, topic_id=%s, text=%s, user_id=%s",
-                   group_id, topic_id, raw_text, update.effective_user.id)
-
+        
         if not await is_admin(update, context):
-            logger.warning("Non-admin user %s attempted subtract command: %s",
-                         update.effective_user.id, raw_text)
             await update.message.reply_text("❌ فقط ادمین می‌تواند مشارکت را کاهش دهد.")
             return
 
-        # Parse number from command arguments or message text
+        # 2. دریافت و پارس کردن عدد
+        raw_text = update.message.text.strip()
         number = None
         if context.args:
             number = parse_number(context.args[0])
-            logger.debug("Attempting to parse number from args: args=%s, result=%s", context.args[0], number)
         if number is None:
-            # Try to parse from raw text (handles both -50 and /subtract 50 formats)
-            number = parse_number(raw_text.replace("/subtract", "").strip())
-            logger.debug("Attempting to parse number from raw text: text=%s, result=%s", 
-                        raw_text.replace("/subtract", "").strip(), number)
+            # هندل کردن حالت‌های مختلف مثل /subtract 50 یا -50
+            clean_text = raw_text.replace("/subtract", "").replace("کاهش", "").strip()
+            number = parse_number(clean_text)
         
         if number is None:
-            logger.debug("Invalid number for subtract: %s, group_id=%s", raw_text, group_id)
-            await update.message.reply_text(
-                "📝 لطفاً یک عدد معتبر وارد کنید.\n"
-                "مثال: subtract 50\n"
-                "یا: -50"
-            )
+            await update.message.reply_text("📝 لطفاً یک عدد معتبر وارد کنید (مثال: -50).")
             return
 
-        # Ensure number is positive for subtraction logic below
-        # (Note: If handed over to handle_khatm_message, the original negative text is used)
-        number = abs(number)
-        logger.debug("Normalized subtraction amount: %d", number)
+        number = abs(number) # مطمئن می‌شویم عدد برای محاسبات مثبت است (بعداً منفی‌اش می‌کنیم)
 
-        group = await fetch_one(
-            """
-            SELECT is_active, max_display_verses 
-            FROM groups WHERE group_id = ?
-            """,
-            (group_id,)
-        )
-        logger.debug("Retrieved group info: group_id=%s, active=%s", 
-                    group_id, group["is_active"] if group else None)
-
-        if not group or not group["is_active"]:
-            logger.debug("Group not found or inactive: group_id=%s", group_id)
-            await update.message.reply_text("از <code>start</code> یا 'شروع' استفاده کنید.", parse_mode=constants.ParseMode.HTML)
-            return
-
+        # 3. دریافت اطلاعات تاپیک
         topic = await fetch_one(
             """
             SELECT khatm_type, current_total, zekr_text, min_ayat, max_ayat, 
@@ -792,192 +764,123 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             """,
             (topic_id, group_id)
         )
-        if topic and topic["khatm_type"] == "doa":
-            # چون ادعیه چند تا هستند، باید منو باز شود تا انتخاب کنید از کدام کم شود
-            return await handle_khatm_message(update, context)
-        # -------------------------------------------------------------
-        logger.debug("Retrieved topic info: topic_id=%s, type=%s, active=%s", 
-                    topic_id, topic["khatm_type"] if topic else None, 
-                    topic["is_active"] if topic else None)
 
-        if not topic:
-            logger.debug("No topic found: topic_id=%s, group_id=%s", topic_id, group_id)
-            await update.message.reply_text("❌ تاپیک ختم تنظیم نشده است. از <code>topic</code> یا 'تاپیک' استفاده کنید.", parse_mode=constants.ParseMode.HTML)
-            return
-        
-        if not topic["is_active"]:
-            logger.debug("Topic is not active: topic_id=%s", topic_id)
-            await update.message.reply_text(
-                "برای فعال‌سازی، از دستورات <code>khatm_zekr</code>، <code>khatm_salavat</code> یا <code>khatm_ghoran</code> استفاده کنید.",
-                parse_mode=constants.ParseMode.HTML
-            )
+        if not topic or not topic["is_active"]:
+            await update.message.reply_text("❌ تاپیک فعال یافت نشد.")
             return
 
         # ---------------------------------------------------------------------
-        # ✅ بخش جدید و مهم: ارجاع ادعیه به تابع اصلی برای نمایش منو
+        # ✅ بخش اصلاح شده: مدیریت اختصاصی ادعیه (نمایش مستقیم دکمه‌ها)
         # ---------------------------------------------------------------------
         if topic["khatm_type"] == "doa":
-            # تابع handle_khatm_message خودش منوی انتخاب (زیارت/دعا) را نشان می‌دهد
-            # و چون عدد منفی است، از دیتابیس کم خواهد کرد.
-            return await handle_khatm_message(update, context)
-        # ---------------------------------------------------------------------
-
-        user_id = update.effective_user.id
-        username = update.effective_user.username or update.effective_user.first_name
-        first_name = update.effective_user.first_name
-
-        # Get user's current contribution
-        user = await fetch_one(
-            """
-            SELECT total_salavat, total_zekr, total_ayat 
-            FROM users WHERE user_id = ? AND group_id = ? AND topic_id = ?
-            """,
-            (user_id, group_id, topic_id)
-        )
-        logger.debug("Retrieved user contribution: user_id=%s, salavat=%s, zekr=%s, ayat=%s",
-                    user_id, user["total_salavat"] if user else None,
-                    user["total_zekr"] if user else None,
-                    user["total_ayat"] if user else None)
-
-        # Get the appropriate total based on khatm type
-        user_total = (
-            user["total_salavat"] if topic["khatm_type"] == "salavat" else
-            user["total_zekr"] if topic["khatm_type"] == "zekr" else
-            user["total_ayat"] if topic["khatm_type"] == "ghoran" else 0
-        ) if user else 0
-        logger.debug("Calculated user total for khatm_type %s: %d", topic["khatm_type"], user_total)
-
-        # Validate subtraction amount
-        if user_total < number:
-            logger.warning(
-                "Cannot subtract %d: user_total=%d would become negative, user_id=%s",
-                number, user_total, user_id
-            )
-            await update.message.reply_text(
-                f"❌ مقدار کسر ({number}) نمی‌تواند از مشارکت فعلی ({user_total}) بیشتر باشد."
-            )
-            return
-
-        verses = None
-        new_verse_id = None
-        if topic["khatm_type"] == "ghoran":
-            max_subtract_ayat = min(20, user_total)  # Limit to user's total or 20, whichever is smaller
-            number = min(number, max_subtract_ayat)
-            
-            range_result = await fetch_one(
-                """
-                SELECT start_verse_id, end_verse_id 
-                FROM khatm_ranges WHERE group_id = ? AND topic_id = ?
-                """,
+            # دریافت لیست دعاها
+            items = await fetch_all(
+                "SELECT id, title, category FROM doa_items WHERE group_id = ? AND topic_id = ?",
                 (group_id, topic_id)
             )
-            if not range_result:
-                logger.debug("No khatm range defined: topic_id=%s, group_id=%s", topic_id, group_id)
-                await update.message.reply_text("❌ محدوده ختم تعریف نشده است.")
+            
+            if not items:
+                await update.message.reply_text("❌ هیچ دعایی تعریف نشده است.")
                 return
 
-            start_verse_id, end_verse_id = range_result["start_verse_id"], range_result["end_verse_id"]
-            current_verse_id = topic["current_verse_id"]
-            new_verse_id = max(start_verse_id, current_verse_id - number)
+            # ذخیره درخواست در حافظه (با عدد منفی)
+            user_msg_id = update.message.message_id
+            if 'pending_doa' not in context.chat_data:
+                context.chat_data['pending_doa'] = {}
+                
+            context.chat_data['pending_doa'][user_msg_id] = {
+                "user_id": update.effective_user.id,
+                "amount": -number,  # <--- نکته مهم: اینجا عدد را منفی ذخیره می‌کنیم
+                "username": update.effective_user.username,
+                "first_name": update.effective_user.first_name
+            }
 
-            request = {
-                "type": "contribution",
-                "group_id": group_id,
-                "topic_id": topic_id,
-                "user_id": user_id,
-                "amount": -number,  # Negative amount for subtraction
-                "verse_id": new_verse_id,
-                "khatm_type": "ghoran",
-                "current_verse_id": new_verse_id,
-                "completed": False,
-            }
-        else:
-            request = {
-                "type": "contribution",
-                "group_id": group_id,
-                "topic_id": topic_id,
-                "user_id": user_id,
-                "amount": -number,  # Negative amount for subtraction
-                "khatm_type": topic["khatm_type"],
-                "completed": False,
-            }
+            # ساخت دکمه‌ها (دقیقاً مثل تابع اصلی)
+            ziyarats = [i for i in items if i['category'] == 'ziyarat']
+            duas = [i for i in items if i['category'] == 'doa']
+            
+            keyboard = []
+            max_len = max(len(ziyarats), len(duas))
+            
+            for i in range(max_len):
+                row = []
+                # ستون چپ: زیارت
+                if i < len(ziyarats):
+                    item = ziyarats[i]
+                    cb_data = f"doa_sel_{user_msg_id}_{item['id']}"
+                    row.append(InlineKeyboardButton(f"🕌 {item['title']}", callback_data=cb_data))
+                else:
+                    row.append(InlineKeyboardButton(" ", callback_data="noop"))
+                
+                # ستون راست: دعا
+                if i < len(duas):
+                    item = duas[i]
+                    cb_data = f"doa_sel_{user_msg_id}_{item['id']}"
+                    row.append(InlineKeyboardButton(f"🤲 {item['title']}", callback_data=cb_data))
+                else:
+                    row.append(InlineKeyboardButton(" ", callback_data="noop"))
+                
+                keyboard.append(row)
+
+            keyboard.append([InlineKeyboardButton("❌ لغو", callback_data=f"doa_cancel_{user_msg_id}")])
+            
+            await update.message.reply_text(
+                f"🔻 کسر {number} عدد.\nاز کدام مورد کم شود؟",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return  # <--- خروج فوری برای جلوگیری از اجرای کدهای پایین
+        # ---------------------------------------------------------------------
+
+
+        # 4. ادامه منطق برای سایر ختم‌ها (صلوات، ذکر، قرآن)
+        user_id = update.effective_user.id
+        
+        # دریافت آمار کاربر
+        user = await fetch_one(
+            "SELECT total_salavat, total_zekr, total_ayat FROM users WHERE user_id = ? AND group_id = ? AND topic_id = ?",
+            (user_id, group_id, topic_id)
+        )
+        
+        user_total = 0
+        if user:
+            if topic["khatm_type"] == "salavat": user_total = user["total_salavat"]
+            elif topic["khatm_type"] == "zekr": user_total = user["total_zekr"]
+            elif topic["khatm_type"] == "ghoran": user_total = user["total_ayat"]
+
+        if user_total < number:
+            await update.message.reply_text(f"❌ موجودی شما ({user_total}) کمتر از مقدار کسر ({number}) است.")
+            return
+
+        # ثبت در صف دیتابیس
+        request = {
+            "type": "contribution",
+            "group_id": group_id,
+            "topic_id": topic_id,
+            "user_id": user_id,
+            "amount": -number,
+            "khatm_type": topic["khatm_type"],
+            "completed": False,
+        }
+        
+        if topic["khatm_type"] == "ghoran":
+             request["verse_id"] = topic["current_verse_id"]
+             request["current_verse_id"] = topic["current_verse_id"]
 
         await write_queue.put(request)
-        logger.debug(
-            "Queued subtract contribution: group_id=%s, topic_id=%s, amount=%d",
-            group_id, topic_id, -number
-        )
 
-        previous_total = topic["current_total"]
-        new_total = previous_total - number
-
+        # نمایش پیام
+        new_total = topic["current_total"] - number
         sepas_text = await get_random_sepas(group_id)
-        message = await format_khatm_message(
-            topic["khatm_type"],
-            previous_total,
-            -number,  # Negative number for subtraction
-            new_total,
-            sepas_text,
-            group_id,
+        msg = await format_khatm_message(
+            topic["khatm_type"], topic["current_total"], -number, new_total, sepas_text, group_id,
             topic["zekr_text"] if topic["khatm_type"] in ["zekr", "salavat"] else None,
-            verses=verses,
-            max_display_verses=group["max_display_verses"],
-            completion_count=topic["completion_count"]
+            max_display_verses=10, completion_count=topic["completion_count"]
         )
+        await reply_text_and_schedule_deletion(update, context, msg, parse_mode=ParseMode.HTML)
 
-        try:
-            # حالا message می‌تواند یک رشته یا لیستی از رشته‌ها باشد
-            if isinstance(message, list):
-                for idx, msg_part in enumerate(message):
-                    await reply_text_and_schedule_deletion(update, context, msg_part, parse_mode=ParseMode.HTML)
-                    if idx < len(message) - 1:
-                        # کمی مکث بین ارسال پیام‌ها
-                        await asyncio.sleep(0.5)
-            else:
-                # برای سازگاری با نسخه‌های قبلی
-                await reply_text_and_schedule_deletion(update, context, message, parse_mode=ParseMode.HTML)
-        except TimedOut:
-            logger.warning(
-                "Timed out sending subtract message for group_id=%s, topic_id=%s, retrying once",
-                group_id, topic_id
-            )
-            await asyncio.sleep(2)
-            # تلاش مجدد فقط برای اولین پیام یا تنها پیام
-            first_msg = message[0] if isinstance(message, list) else message
-            await reply_text_and_schedule_deletion(update, context, first_msg, parse_mode=ParseMode.HTML)
-            
-            # اگر پیام‌های بیشتری وجود دارد، تلاش برای ارسال آنها
-            if isinstance(message, list) and len(message) > 1:
-                for idx, msg_part in enumerate(message[1:], 1):
-                    try:
-                        await reply_text_and_schedule_deletion(update, context, msg_part, parse_mode=ParseMode.HTML)
-                        await asyncio.sleep(0.5)
-                    except TimedOut:
-                        logger.warning("Timed out sending message part %d for subtract in group_id=%s, topic_id=%s",
-                                     idx, group_id, topic_id)
-
-    except TimedOut:
-        logger.error(
-            "Timed out error in subtract_khatm: group_id=%s, topic_id=%s, user_id=%s",
-            group_id, topic_id, update.effective_user.id, exc_info=True
-        )
-        return
     except Exception as e:
-        logger.error(
-            "Error in subtract_khatm: %s, group_id=%s, topic_id=%s, user_id=%s",
-            e, group_id, topic_id, update.effective_user.id, exc_info=True
-        )
-        try:
-            await reply_text_and_schedule_deletion(update, context, 
-                "❌ خطایی رخ داد. لطفاً دوباره تلاش کنید یا با ادمین تماس بگیرید."
-            )
-        except TimedOut:
-            logger.warning(
-                "Timed out sending error message for group_id=%s, topic_id=%s",
-                group_id, topic_id
-            )
-
-
+        logger.error(f"Error in subtract_khatm: {e}", exc_info=True)
+        await update.message.reply_text("❌ خطا در عملیات.")
 
 
 
