@@ -441,13 +441,23 @@ async def khatm_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 2. اضافه شدن بخش ادعیه (Doa)
         # ---------------------------------------------------
         elif khatm_type == "doa":
-
-            context.user_data['doa_setup_step'] = 'waiting_for_doa_name' 
-            context.user_data['doa_setup_topic_id'] = topic_id
+            # به جای اینکه مستقیم نام بخواهیم، اول نوع را می‌پرسیم
+            keyboard = [
+                [
+                    InlineKeyboardButton("🕌 زیارت (ستون چپ)", callback_data="set_cat_ziyarat"),
+                    InlineKeyboardButton("🤲 دعا (ستون راست)", callback_data="set_cat_doa")
+                ]
+            ]
             
-            message = "🤲 ختم ادعیه و زیارت انتخاب شد.\n\nلطفاً **نام زیارت یا دعا** را ارسال کنید:\n(مثال: زیارت عاشورا)"
+            # متن پیام را عوض می‌کنیم و دکمه‌ها را می‌فرستیم
+            await query.message.edit_text(
+                "🤲 شما ختم «ادعیه و زیارت» را انتخاب کردید.\n\n"
+                "لطفاً ابتدا مشخص کنید موردی که می‌خواهید اضافه کنید در کدام دسته قرار می‌گیرد؟",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode=constants.ParseMode.MARKDOWN
+            )
+            return # اینجا خارج می‌شویم تا منتظر کلیک دکمه بمانیم
         # ---------------------------------------------------
-
         elif khatm_type == "salavat":
             default_stop_number = 100_000_000_000
             await execute(
@@ -1250,32 +1260,33 @@ async def start_add_doa_item(update: Update, context: ContextTypes.DEFAULT_TYPE)
         parse_mode=constants.ParseMode.MARKDOWN
     )
 
-# 2. هندلر انتخاب دسته‌بندی (باید در main.py رجیستر شود)
+
 async def handle_doa_category_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """پردازش انتخاب نوع (زیارت/دعا) و درخواست نام"""
     query = update.callback_query
     await query.answer()
     
-    # تشخیص نوع
+    # 1. تشخیص نوع بر اساس دکمه کلیک شده
     category = 'ziyarat' if 'ziyarat' in query.data else 'doa'
     
-    # پیدا کردن Topic ID صحیح
-    # اگر پیام در تاپیک است، همان را برمی‌داریم. اگر نه، ID گروه را.
+    # 2. پیدا کردن ID تاپیک
     topic_id = query.message.message_thread_id if query.message.is_topic_message else query.message.chat.id
     
-    # ذخیره وضعیت در حافظه موقت
-    context.user_data['doa_setup_step'] = 'waiting_for_doa_name'
+    # 3. ذخیره اطلاعات حیاتی در حافظه
+    context.user_data['doa_setup_step'] = 'waiting_for_doa_name' # تنظیم مرحله بعدی
     context.user_data['doa_setup_topic_id'] = topic_id
-    context.user_data['doa_category'] = category
+    context.user_data['doa_category'] = category # <--- مهم: ذخیره دسته‌بندی
     
     cat_text = "زیارت 🕌" if category == 'ziyarat' else "دعا 🤲"
     
+    # 4. درخواست نام از کاربر
     await query.edit_message_text(
-        f"✅ دسته‌بندی انتخاب شد: **{cat_text}**\n\n"
+        f"✅ دسته‌بندی: **{cat_text}**\n\n"
         "✍️ حالا لطفاً **نام** آن را بنویسید:\n"
-        "(مثال: زیارت عاشورا، دعای کمیل...)",
+        "(مثال: زیارت عاشورا)",
         parse_mode=constants.ParseMode.MARKDOWN
     )
+
 
 # 3. تابع اصلی پردازش متن‌های ادمین
 @log_function_call
