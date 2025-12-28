@@ -441,7 +441,8 @@ async def khatm_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 2. اضافه شدن بخش ادعیه (Doa)
         # ---------------------------------------------------
         elif khatm_type == "doa":
-            context.user_data['doa_setup_step'] = 'waiting_for_name'
+
+            context.user_data['doa_setup_step'] = 'waiting_for_doa_name' 
             context.user_data['doa_setup_topic_id'] = topic_id
             
             message = "🤲 ختم ادعیه و زیارت انتخاب شد.\n\nلطفاً **نام زیارت یا دعا** را ارسال کنید:\n(مثال: زیارت عاشورا)"
