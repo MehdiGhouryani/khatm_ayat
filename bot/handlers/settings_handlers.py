@@ -445,6 +445,8 @@ async def sepas_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Error in sepas_off: %s, group_id=%s", e, group_id)
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+
+
 @ignore_old_messages()
 async def add_sepas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /addsepas command to add custom sepas text."""
@@ -456,18 +458,27 @@ async def add_sepas(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not context.args:
             logger.warning("Addsepas command called without arguments")
-            await update.message.reply_text("لطفاً متن سپاس را وارد کنید. مثال: /addsepas یا علی")
+            await update.message.reply_text("لطفاً متن سپاس را وارد کنید.\nمثال: /addsepas یا علی")
             return
 
-        sepas_text = " ".join(context.args)
+        # دریافت متن و حذف ایموجی 🌱
+        raw_text = " ".join(context.args)
+        sepas_text = raw_text.replace("🌱", "").strip()
+
+        if not sepas_text:
+            await update.message.reply_text("❌ متن وارد شده معتبر نیست (خالی است).")
+            return
+
         group_id = update.effective_chat.id
 
+        # بررسی فعال بودن گروه (طبق کد قدیمی شما)
         group = await fetch_one("SELECT is_active FROM groups WHERE group_id = ?", (group_id,))
         if not group or not group["is_active"]:
             logger.debug("Group not found or inactive: group_id=%s", group_id)
             await update.message.reply_text("گروه فعال نیست. از /start یا 'شروع' استفاده کنید.")
             return
 
+        # ارسال به صف پردازش (طبق کد قدیمی شما)
         request = {
             "type": "add_sepas",
             "group_id": group_id,
@@ -476,10 +487,12 @@ async def add_sepas(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await write_queue.put(request)
         logger.info("Sepas text added queued: group_id=%s, text=%s", group_id, sepas_text)
 
-        await update.message.reply_text(f"متن سپاس '{sepas_text}' اضافه شد.")
+        await update.message.reply_text(f"✅ متن سپاس '{sepas_text}' اضافه شد.\n(اگر ایموجی 🌱 داشت، حذف شد)")
+
     except Exception as e:
-        logger.error("Error in add_sepas: %s, group_id=%s", e, group_id)
+        logger.error("Error in add_sepas: %s, group_id=%s", e, group_id if 'group_id' in locals() else 'Unknown')
         await update.message.reply_text("خطایی رخ داد. لطفاً دوباره تلاش کنید.")
+
 
 @ignore_old_messages()
 async def reset_daily(update: Update, context: ContextTypes.DEFAULT_TYPE):

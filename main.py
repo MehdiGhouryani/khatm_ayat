@@ -342,7 +342,7 @@ def register_handlers(app: Application):
         CommandHandler("min_ayat", min_ayat),
         CommandHandler("sepas_on", sepas_on),
         CommandHandler("sepas_off", sepas_off),
-        CommandHandler("addsepas", add_sepas),
+        CommandHandler("add_sepas", add_sepas),
         CommandHandler("jam_on", jam_on),
         CommandHandler("jam_off", jam_off),
         CommandHandler("set_completion_message", set_completion_message),
