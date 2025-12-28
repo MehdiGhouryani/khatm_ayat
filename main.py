@@ -303,7 +303,8 @@ def register_handlers(app: Application):
     app.add_handler(CallbackQueryHandler(handle_zekr_selection, pattern=r"^zekr_"))
 
     # انتخاب نوع ختم (منوی تاپیک یا استارت)
-    app.add_handler(CallbackQueryHandler(khatm_selection, pattern="khatm_(zekr|salavat|ghoran)"))
+
+    app.add_handler(CallbackQueryHandler(khatm_selection, pattern="khatm_(zekr|salavat|ghoran|doa)"))
 
     # --- دستورات ---
     command_handlers = [
