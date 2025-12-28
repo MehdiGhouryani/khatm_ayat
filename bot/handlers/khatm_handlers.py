@@ -179,10 +179,12 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
             return
 
         # Step 4: Fetch topic details
+
         topic = await fetch_one(
             """
             SELECT khatm_type, current_total, zekr_text, min_ayat, max_ayat, period_number, 
-                   stop_number, completion_message, current_verse_id, is_active, completion_count, is_completed 
+                   stop_number, completion_message, current_verse_id, is_active, 
+                   completion_count, is_completed, min_number, max_number 
             FROM topics WHERE topic_id = ? AND group_id = ?
             """,
             (topic_id, group_id)
@@ -283,13 +285,13 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
         
 
         elif topic["khatm_type"] == "zekr":
-            min_number = group.get("min_number", 0)
-            max_number = group.get("max_number", 1000000)
+            min_limit = topic["min_number"] if topic["min_number"] is not None else group.get("min_number", 0)
+            max_limit = topic["max_number"] if topic["max_number"] and topic["max_number"] > 0 else group.get("max_number", 1000000000)
 
-            if not (min_number <= amount <= max_number):
+            if not (min_limit <= amount <= max_limit):
                 logger.warning("Contribution amount %s out of range (%s-%s): group_id=%s, user_id=%s",
-                               amount, min_number, max_number, group_id, user_id)
-                msg = f"عدد ارسالی باید بین {min_number} و {max_number} باشد."
+                               amount, min_limit, max_limit, group_id, user_id)
+                msg = f"عدد ارسالی باید بین {min_limit} و {max_limit} باشد."
                 await reply_text_and_schedule_deletion(update, context, msg)
                 return
             
@@ -321,11 +323,22 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
             logger.info("Stored pending zekr: msg_id=%s, user_id=%s, amount=%s", user_msg_id, user_id, amount)
 
             keyboard = []
+            row = []
             for zekr in zekrs:
                 if zekr and zekr.get('zekr_text'):
                     callback_data = f"zekr_sel_{user_msg_id}_{zekr['id']}"
-                    keyboard.append([InlineKeyboardButton(zekr['zekr_text'], callback_data=callback_data)])
+                    row.append(InlineKeyboardButton(zekr['zekr_text'], callback_data=callback_data))
+                
+                # وقتی دو تا شد، اضافه کن به کیبورد و ردیف را خالی کن
+                if len(row) == 2:
+                    keyboard.append(row)
+                    row = []
+            
+            # اگر دکمه‌ای باقی مانده (تعداد فرد)، آن را هم اضافه کن
+            if row:
+                keyboard.append(row)
 
+            # دکمه لغو در سطر آخر
             keyboard.append([InlineKeyboardButton("❌ لغو", callback_data=f"zekr_cancel_{user_msg_id}")])
             reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -550,7 +563,7 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
             # 3. متن پیام نهایی
             response_text = (
                 f"✅ <b>{number}</b> بار <b>{title}</b> ثبت شد!\n"
-                f"📊 جمع کل: <b>{new_total:,}</b>\n"
+                f"📊  کل: <b>{new_total:,}</b>\n"
                 "➖➖➖➖➖➖➖➖\n"
                 f"{link_text}\n"
                 "➖➖➖➖➖➖➖➖\n"
@@ -1375,7 +1388,7 @@ async def handle_doa_selection(update: Update, context: ContextTypes.DEFAULT_TYP
     response_text = (
         f"<b>{amount} بار {title} ثبت شد!\n"
         f"آمار {title} : {new_item_total:,}\n"
-        f"آمار کل گروه : {new_topic_total:,}\n"
+        f"امار کل ختم ها : {new_topic_total:,}\n"
         f"➖➖➖➖➖➖➖➖\n"
         f"{link_section}"
         f"{sepas} 🌱</b>"

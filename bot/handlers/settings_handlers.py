@@ -146,47 +146,80 @@ async def reset_kol(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error("Error in reset_kol: %s, group_id=%s, topic_id=%s", e, group_id, topic_id)
         await reply_text_and_schedule_deletion(update, context, "خطایی رخ داد. لطفاً دوباره تلاش کنید.")
 
+
+
 @ignore_old_messages()
 async def set_max(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    تنظیم حداکثر تعداد مجاز برای مشارکت.
+    اگر در تاپیک باشد، فقط برای همان تاپیک تنظیم می‌شود.
+    اگر در گروه معمولی باشد، برای کل گروه تنظیم می‌شود.
+    """
     try:
+        # 1. بررسی ادمین
         if not await is_admin(update, context):
             logger.warning("Non-admin user %s attempted /max", update.effective_user.id)
             return
 
+        # 2. بررسی آرگومان
         if not context.args:
             logger.warning("Max command called without arguments")
-            await reply_text_and_schedule_deletion(update, context, "لطفاً عدد حداکثر را وارد کنید. مثال: /max 1000")
+            await reply_text_and_schedule_deletion(update, context, "لطفاً عدد حداکثر را وارد کنید.\nمثال: /max 1000")
             return
 
+        # 3. تبدیل و اعتبارسنجی عدد
         number = parse_number(context.args[0])
-        if number is None or number <= 0:
+        if number is None or number < 0:
             logger.warning("Invalid max number: %s", context.args[0])
-            await reply_text_and_schedule_deletion(update, context, "عدد نامعتبر است.")
+            await reply_text_and_schedule_deletion(update, context, "عدد نامعتبر است. لطفاً یک عدد مثبت وارد کنید.")
             return
 
         group_id = update.effective_chat.id
-        topic_id = update.message.message_thread_id or group_id
+        
+        # تشخیص اینکه آیا داخل یک تاپیک خاص هستیم؟
+        # (اگر گروه فروم باشد و پیام داخل ترد باشد)
+        topic_id = None
+        if update.effective_chat.is_forum and update.message.message_thread_id:
+            topic_id = update.message.message_thread_id
 
+        # 4. بررسی فعال بودن گروه
         group = await fetch_one("SELECT is_active FROM groups WHERE group_id = ?", (group_id,))
         if not group or not group["is_active"]:
             logger.debug("Group not found or inactive: group_id=%s", group_id)
             await reply_text_and_schedule_deletion(update, context, "گروه فعال نیست. از /start یا 'شروع' استفاده کنید.")
             return
 
-        request = {
-            "type": "set_max",
-            "group_id": group_id,
-            "topic_id": topic_id,
-            "max_number": number,
-            "is_digit": context.args[0].isdigit()
-        }
-        await write_queue.put(request)
-        logger.info("Max set queued: group_id=%s, topic_id=%s, max=%d", group_id, topic_id, number)
+        # 5. ذخیره در دیتابیس (اصلاح باگ تداخل)
+        if topic_id:
+            # ✅ حالت اول: تنظیم برای یک تاپیک خاص
+            # ابتدا مطمئن می‌شویم تاپیک وجود دارد
+            topic_exists = await fetch_one("SELECT 1 FROM topics WHERE group_id = ? AND topic_id = ?", (group_id, topic_id))
+            if not topic_exists:
+                await reply_text_and_schedule_deletion(update, context, "❌ تاپیک یافت نشد. ابتدا یک ختم در این تاپیک شروع کنید.")
+                return
 
-        await reply_text_and_schedule_deletion(update, context, f"حداکثر تعداد به {number} تنظیم شد.")
+            await execute(
+                "UPDATE topics SET max_number = ? WHERE group_id = ? AND topic_id = ?",
+                (number, group_id, topic_id)
+            )
+            msg = f"✅ سقف مجاز برای **این تاپیک** روی {number:,} تنظیم شد."
+            logger.info("Set topic max number: group=%s, topic=%s, max=%s", group_id, topic_id, number)
+        
+        else:
+            # ✅ حالت دوم: تنظیم پیش‌فرض برای کل گروه (یا گروه‌های بدون تاپیک)
+            await execute(
+                "UPDATE groups SET max_number = ? WHERE group_id = ?",
+                (number, group_id)
+            )
+            msg = f"✅ سقف مجاز پیش‌فرض **گروه** روی {number:,} تنظیم شد."
+            logger.info("Set group max number: group=%s, max=%s", group_id, number)
+
+        await reply_text_and_schedule_deletion(update, context, msg, parse_mode='Markdown')
+
     except Exception as e:
-        logger.error("Error in set_max: %s, group_id=%s, topic_id=%s", e, group_id, topic_id)
+        logger.error("Error in set_max: %s, group_id=%s", e, update.effective_chat.id)
         await reply_text_and_schedule_deletion(update, context, "خطایی رخ داد. لطفاً دوباره تلاش کنید.")
+
 
 @ignore_old_messages()
 async def max_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
