@@ -391,7 +391,6 @@ def register_handlers(app: Application):
 
     # 3. دستور حذف آیتم توسط ادمین
     app.add_handler(CommandHandler("del_doa", start_remove_doa_item))
-    app.add_handler(CommandHandler("حذف_دعا", start_remove_doa_item))
 
     # 4. هندلرهای متنی برای مراحل افزودن و حذف (با group متفاوت برای جلوگیری از تداخل)
     # group=10: برای مراحل افزودن
