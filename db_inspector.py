@@ -1,47 +1,73 @@
 import sqlite3
 import os
 
-DB_PATH = "bot.db"
+# تلاش برای یافتن دیتابیس در مسیرهای مختلف
+POSSIBLE_PATHS = [
+    "bot.db",
+    "/home/rhaegali/public_html/khatm_ayat/bot.db",
+    "khatm.db"
+]
 
-def clean_temp_tables():
-    if not os.path.exists(DB_PATH):
-        print("❌ دیتابیس پیدا نشد.")
+def find_db():
+    for p in POSSIBLE_PATHS:
+        if os.path.exists(p):
+            return p
+    return None
+
+def rescue_database():
+    db_path = find_db()
+    if not db_path:
+        print("❌ دیتابیس پیدا نشد!")
         return
 
-    print(f"🧹 شروع عملیات پاکسازی جداول موقت در {DB_PATH}")
-    conn = sqlite3.connect(DB_PATH)
+    print(f"🚑 شروع عملیات نجات روی: {db_path}")
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
     try:
-        # پیدا کردن تمام جدول‌هایی که اسمشان با _temp تمام می‌شود
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%_temp'")
-        temp_tables = cursor.fetchall()
-
-        if not temp_tables:
-            print("✅ هیچ جدول موقت مزاحمی پیدا نشد.")
-        else:
-            for (table_name,) in temp_tables:
-                print(f"   🗑 در حال حذف جدول موقت: {table_name}")
-                cursor.execute(f"DROP TABLE IF EXISTS {table_name}")
-            
-            conn.commit()
-            print(f"🎉 {len(temp_tables)} جدول موقت با موفقیت پاک شدند.")
-
-        # چک کردن دوباره تریگرها برای اطمینان
-        cursor.execute("SELECT name, sql FROM sqlite_master WHERE type='trigger'")
+        # 1. حذف تمام تریگرها (منبع اصلی شرارت!)
+        print("🔫 در حال حذف تمام تریگرها...")
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='trigger'")
         triggers = cursor.fetchall()
-        for name, sql in triggers:
-            if "_temp" in str(sql):
-                print(f"   ⚠️ تریگر مشکوک پیدا شد: {name} -> حذف می‌شود.")
-                cursor.execute(f"DROP TRIGGER IF EXISTS {name}")
-                conn.commit()
+        
+        if not triggers:
+            print("   ✅ هیچ تریگری پیدا نشد.")
+        
+        for (name,) in triggers:
+            print(f"   🗑 حذف تریگر: {name}")
+            cursor.execute(f"DROP TRIGGER IF EXISTS {name}")
+
+        # 2. حذف تمام جداول موقت و خراب (با پسوند temp)
+        print("\n🧹 در حال جستجوی جداول موقت مزاحم...")
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        tables = cursor.fetchall()
+        
+        for (name,) in tables:
+            if "temp" in name.lower():
+                print(f"   🗑 حذف جدول موقت: {name}")
+                cursor.execute(f"DROP TABLE IF EXISTS {name}")
+
+        # 3. اطمینان از وجود جدول‌های اصلی
+        print("\n🏥 چکاپ نهایی جداول اصلی...")
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='topic_zekrs'")
+        if cursor.fetchone():
+            print("   ✅ جدول topic_zekrs سالم است.")
+        else:
+            print("   ⚠️ هشدار: جدول topic_zekrs پیدا نشد! (این عجیب است)")
+
+        conn.commit()
+        
+        # 4. بهینه‌سازی نهایی
+        print("\n✨ فشرده‌سازی و بازسازی دیتابیس (VACUUM)...")
+        cursor.execute("VACUUM")
+        
+        print("\n✅✅ عملیات تمام شد. دیتابیس الان باید مثل روز اول کار کند.")
 
     except Exception as e:
         print(f"❌ خطا: {e}")
+        conn.rollback()
     finally:
-        cursor.execute("VACUUM") # فشرده‌سازی و بهینه‌سازی نهایی دیتابیس
         conn.close()
-        print("✨ دیتابیس بهینه‌سازی (VACUUM) شد.")
 
 if __name__ == "__main__":
-    clean_temp_tables()
+    rescue_database()
