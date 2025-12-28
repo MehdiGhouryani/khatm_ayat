@@ -8,10 +8,10 @@ from telegram import Update, constants, ReplyParameters, InlineKeyboardButton, I
 from typing import List, Optional
 from telegram.ext import ContextTypes
 from telegram.error import TimedOut
-from bot.database.db import fetch_one, write_queue, fetch_all
+from bot.database.db import fetch_one, write_queue, fetch_all, execute
 from bot.utils.helpers import parse_number, format_khatm_message, get_random_sepas, reply_text_and_schedule_deletion, ignore_old_messages
 from bot.utils.quran import QuranManager
-from bot.handlers.admin_handlers import is_admin, TEXT_COMMANDS
+from bot.handlers.admin_handlers import is_admin, TEXT_COMMANDS,process_doa_setup
 from telegram.constants import ParseMode
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,13 @@ def log_function_call(func):
 async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle khatm-related messages for salavat, zekr, or Quran contributions."""
     try:
+        if await process_doa_setup(update, context):
+            return
+        # -----------------
+
         is_admin_user = await is_admin(update, context)
+
+
         logger.info("Starting handle_khatm_message: user_id=%s, chat_id=%s, message_id=%s", 
                    update.effective_user.id, update.effective_chat.id, update.message.message_id)
 
@@ -328,7 +334,70 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
             	reply_parameters=ReplyParameters(message_id=user_msg_id)
             )
             return
+        # ---------------------------------------------------------------------
+        # بخش جدید: مدیریت ادعیه و زیارات (نمایش دکمه‌های دو ستونه)
+        # ---------------------------------------------------------------------
+        elif topic["khatm_type"] == "doa":
+            # 1. خواندن لیست آیتم‌ها از دیتابیس
+            items = await fetch_all(
+                "SELECT id, title, category FROM doa_items WHERE group_id = ? AND topic_id = ?",
+                (group_id, topic_id)
+            )
+            
+            if not items:
+                await reply_text_and_schedule_deletion(update, context, "❌ هنوز هیچ دعا یا زیارتی برای این تاپیک تعریف نشده است.")
+                return
 
+            # 2. ذخیره موقت اطلاعات (عدد ارسالی کاربر)
+            user_msg_id = update.message.message_id
+            if 'pending_doa' not in context.chat_data:
+                context.chat_data['pending_doa'] = {}
+                
+            context.chat_data['pending_doa'][user_msg_id] = {
+                "user_id": user_id,
+                "amount": amount, # عددی که کاربر فرستاده
+                "username": username,
+                "first_name": first_name
+            }
+
+            # 3. ساخت کیبورد دو ستونه (زیارت: چپ | دعا: راست)
+            ziyarats = [x for x in items if x['category'] == 'ziyarat']
+            duas = [x for x in items if x['category'] == 'doa']
+            
+            keyboard = []
+            max_len = max(len(ziyarats), len(duas))
+            
+            for i in range(max_len):
+                row = []
+                
+                # --- ستون چپ: زیارت ---
+                if i < len(ziyarats):
+                    z = ziyarats[i]
+                    # فرمت کال‌بک: doa_sel_شناسه پیام_شناسه آیتم
+                    row.append(InlineKeyboardButton(f"🕌 {z['title']}", callback_data=f"doa_sel_{user_msg_id}_{z['id']}"))
+                elif i < len(duas): 
+                    # اگر زیارت تمام شده ولی دعا مانده، برای حفظ نظم ظاهری
+                    pass 
+
+                # --- ستون راست: دعا ---
+                if i < len(duas):
+                    d = duas[i]
+                    row.append(InlineKeyboardButton(f"🤲 {d['title']}", callback_data=f"doa_sel_{user_msg_id}_{d['id']}"))
+                
+                keyboard.append(row)
+
+            # دکمه لغو در پایین
+            keyboard.append([InlineKeyboardButton("❌ لغو", callback_data=f"doa_cancel_{user_msg_id}")])
+            
+            # ارسال پیام پرسشی به کاربر
+            await update.message.reply_text(
+                f"شما عدد **{amount}** را وارد کردید.\nاین تعداد برای کدام مورد ثبت شود؟ 👇",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                reply_to_message_id=user_msg_id,
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return # خروج از تابع (تا پیام تایید پیش‌فرض ارسال نشود)
+        # ---------------------------------------------------------------------
 
         elif topic["khatm_type"] not in ["ghoran", "salavat", "zekr"]: #
             group_min_number = group.get("min_number", 0) #
@@ -461,6 +530,42 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
         await write_queue.put(request)
         logger.info("Queued contribution: %s", request)
+        # --- شروع کدهای جدید برای ادعیه ---
+        if topic["khatm_type"] == "doa":
+            # 1. خواندن اطلاعات دعا (لینک و نام)
+            doa_info = await fetch_one(
+                "SELECT title, link FROM topic_doas WHERE group_id = ? AND topic_id = ?",
+                (group_id, topic_id)
+            )
+            # اگر پیدا نشد، از نام تاپیک استفاده کن
+            title = doa_info['title'] if doa_info else (topic['name'] or "دعا")
+            link = doa_info['link'] if doa_info else "https://t.me/"
+            
+            # 2. ساخت لینک
+            link_text = f"🔗 <a href='{link}'>برای مشاهده متن {title} اینجا کلیک کنید</a>"
+            sepas = await get_random_sepas(group_id)
+            new_total = (topic["current_total"] or 0) + number
+            
+            # 3. متن پیام نهایی
+            response_text = (
+                f"✅ <b>{number}</b> بار <b>{title}</b> ثبت شد!\n"
+                f"📊 جمع کل: <b>{new_total:,}</b>\n"
+                "➖➖➖➖➖➖➖➖\n"
+                f"{link_text}\n"
+                "➖➖➖➖➖➖➖➖\n"
+                f"🌱 <i>{sepas}</i>"
+            )
+            
+            # 4. ارسال و خروج (تا بقیه کدهای پایین اجرا نشوند)
+            await reply_text_and_schedule_deletion(
+                update, 
+                context, 
+                response_text, 
+                parse_mode=ParseMode.HTML
+            )
+            return
+    # --- پایان کدهای جدید ---
+
         sepas_text = await get_random_sepas(group_id)
         
         verses_for_display = []
@@ -1182,3 +1287,109 @@ async def handle_zekr_selection(update: Update, context: ContextTypes.DEFAULT_TY
                 await query.edit_message_text("خطایی رخ داد.")
             except Exception:
                 pass
+
+
+
+
+# -------------------------------------------------------------------------
+# هندلر پردازش کلیک روی دکمه‌های ادعیه و زیارات
+# -------------------------------------------------------------------------
+@log_function_call
+async def handle_doa_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data # فرمت: doa_sel_MSGID_ITEMID
+    parts = data.split('_')
+    
+    # بررسی فرمت دیتا
+    if len(parts) < 3:
+        return
+
+    action = parts[1] # sel یا cancel
+    msg_id = int(parts[2])
+    
+    # --- حالت لغو ---
+    if action == 'cancel':
+        if 'pending_doa' in context.chat_data:
+            context.chat_data['pending_doa'].pop(msg_id, None)
+        await query.message.delete()
+        return
+
+    # --- حالت انتخاب آیتم ---
+    if len(parts) < 4:
+        return
+    item_id = int(parts[3])
+    
+    # بازیابی اطلاعات (عدد کاربر) از حافظه موقت
+    pending_data = context.chat_data.get('pending_doa', {}).get(msg_id)
+    
+    if not pending_data:
+        await query.message.edit_text("❌ زمان انتخاب منقضی شده یا اطلاعات یافت نشد.")
+        return
+
+    # چک کردن اینکه آیا همان کاربری که عدد فرستاده کلیک کرده؟
+    if query.from_user.id != pending_data['user_id']:
+        await query.answer("⛔️ این دکمه مربوط به پیام شما نیست!", show_alert=True)
+        return
+
+    amount = pending_data['amount']
+    group_id = query.message.chat.id
+    # در سوپرگروه‌های فروم‌دار، تاپیک مهم است
+    topic_id = query.message.message_thread_id if query.message.is_topic_message else group_id
+    
+    # 1. آپدیت آمار آیتم خاص (در جدول doa_items)
+    await execute(
+        "UPDATE doa_items SET current_total = current_total + ? WHERE id = ?",
+        (amount, item_id)
+    )
+    
+    # 2. آپدیت آمار کلی تاپیک (در جدول topics)
+    await execute(
+        "UPDATE topics SET current_total = current_total + ? WHERE group_id = ? AND topic_id = ?",
+        (amount, group_id, topic_id)
+    )
+    
+    # 3. دریافت اطلاعات جدید برای نمایش در پیام
+    item_info = await fetch_one("SELECT title, link, current_total FROM doa_items WHERE id = ?", (item_id,))
+    total_topic = await fetch_one("SELECT current_total FROM topics WHERE group_id = ? AND topic_id = ?", (group_id, topic_id))
+    
+    if not item_info:
+        await query.message.edit_text("❌ آیتم مورد نظر یافت نشد.")
+        return
+
+    title = item_info['title']
+    link = item_info['link']
+    new_item_total = item_info['current_total']
+    new_topic_total = total_topic['current_total'] if total_topic else 0
+    
+    sepas = await get_random_sepas(group_id)
+    
+    # ساخت لینک (اگر لینک وجود داشته باشد)
+    link_text = ""
+    if link:
+        link_text = f"🔗 <a href='{link}'>مشاهده متن {title}</a>\n➖➖➖➖➖➖➖➖"
+    
+    response_text = (
+        f"✅ <b>{amount}</b> بار <b>{title}</b> ثبت شد!\n"
+        f"📊 آمار {title}: <b>{new_item_total:,}</b>\n"
+        f"📚 آمار کل گروه: <b>{new_topic_total:,}</b>\n"
+        "➖➖➖➖➖➖➖➖\n"
+        f"{link_text}\n"
+        f"🌱 <i>{sepas}</i>"
+    )
+    
+    # حذف دکمه‌ها
+    await query.message.delete()
+    
+    # ارسال پیام تایید نهایی
+    await context.bot.send_message(
+        chat_id=group_id,
+        text=response_text,
+        message_thread_id=topic_id if topic_id != group_id else None,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True
+    )
+    
+    # پاک کردن دیتا از حافظه
+    context.chat_data['pending_doa'].pop(msg_id, None)

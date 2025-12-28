@@ -13,11 +13,11 @@ from bot.handlers.admin_handlers import (
     start_khatm_zekr, start_khatm_salavat, start_khatm_ghoran, 
     set_khatm_target_number, TEXT_COMMANDS, set_completion_count,
     add_zekr, remove_zekr, list_zekrs, handle_remove_zekr_click, # <--- توابع جدید و صحیح ادمین
-    is_admin
+    is_admin,handle_doa_category_selection,start_remove_doa_item,process_doa_removal,process_doa_setup
 )
 from bot.handlers.khatm_handlers import (
     handle_khatm_message, subtract_khatm, start_from, khatm_status,
-    handle_zekr_selection # <--- تابع جدید دکمه‌های ذکر
+    handle_zekr_selection,handle_doa_selection
 )
 from bot.handlers.settings_handlers import (
     reset_zekr, reset_kol, stop_on, stop_on_off, set_max, max_off, 
@@ -363,7 +363,7 @@ def register_handlers(app: Application):
     # هندلرهای پیام
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_khatm_message))
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, handle_new_message), group=900)
-    
+
     subtract_pattern = r'^[-]?\d+$'
     app.add_handler(MessageHandler(
         filters.Regex(subtract_pattern) & filters.ChatType.GROUPS,
@@ -375,7 +375,33 @@ def register_handlers(app: Application):
         filters.Regex(start_from_pattern) & filters.ChatType.GROUPS,
         start_from
     ))
-    
+
+
+
+
+# ---------------------------------------------------------
+    # هندلرهای جدید بخش ادعیه و زیارات (کپی کنید)
+    # ---------------------------------------------------------
+
+    # 1. کال‌بک انتخاب دسته‌بندی توسط ادمین (دکمه‌های زیارت/دعا)
+    app.add_handler(CallbackQueryHandler(handle_doa_category_selection, pattern=r"^set_cat_"))
+
+    # 2. کال‌بک انتخاب آیتم توسط کاربر (دکمه‌های لیست زیارت‌ها)
+    app.add_handler(CallbackQueryHandler(handle_doa_selection, pattern=r"^doa_(sel|cancel)_"))
+
+    # 3. دستور حذف آیتم توسط ادمین
+    app.add_handler(CommandHandler("del_doa", start_remove_doa_item))
+    app.add_handler(CommandHandler("حذف_دعا", start_remove_doa_item))
+
+    # 4. هندلرهای متنی برای مراحل افزودن و حذف (با group متفاوت برای جلوگیری از تداخل)
+    # group=10: برای مراحل افزودن
+    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS, process_doa_setup), group=10)
+    # group=11: برای مراحل حذف
+    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS, process_doa_removal), group=11)
+
+    # ---------------------------------------------------------
+
+
     app.add_handler(ChatMemberHandler(chat_member_handler, ChatMemberHandler.CHAT_MEMBER))
     app.add_handler(MessageHandler(filters.ALL, user_message_handler), group=999)
 

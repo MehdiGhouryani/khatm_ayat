@@ -23,56 +23,6 @@ def log_function_call(func):
             raise
     return wrapper
 
-TEXT_COMMANDS = {
-    "lock on": {"handler": "lock_on", "admin_only": True, "aliases": ["قفل روشن"], "takes_args": False},
-    "lock off": {"handler": "lock_off", "admin_only": True, "aliases": ["قفل خاموش"], "takes_args": False},
-    "start": {"handler": "start", "admin_only": True, "aliases": ["شروع"], "takes_args": False},
-    "stop": {"handler": "stop", "admin_only": True, "aliases": ["توقف"], "takes_args": False},
-    "help": {"handler": "help_command", "admin_only": False, "aliases": ["راهنما"], "takes_args": False},
-    "max": {"handler": "set_max", "admin_only": True, "aliases": ["حداکثر"], "takes_args": True},
-    "max off": {"handler": "max_off", "admin_only": True, "aliases": ["حداکثر خاموش"], "takes_args": False},
-    "max_ayat": {"handler": "max_ayat", "admin_only": True, "aliases": ["حداکثر آیات"], "takes_args": True},
-    "min": {"handler": "set_min", "admin_only": True, "aliases": ["حداقل"], "takes_args": True},
-    "min_ayat": {"handler": "min_ayat", "admin_only": True, "aliases": ["حداقل آیات"], "takes_args": True},
-    "min off": {"handler": "min_off", "admin_only": True, "aliases": ["حداقل خاموش"], "takes_args": False},
-    "sepas on": {"handler": "sepas_on", "admin_only": True, "aliases": ["سپاس روشن"], "takes_args": False},
-    "sepas off": {"handler": "sepas_off", "admin_only": True, "aliases": ["سپاس خاموش"], "takes_args": False},
-    "add sepas": {"handler": "add_sepas", "admin_only": True, "aliases": ["اضافه سپاس"], "takes_args": True},
-    "reset daily": {"handler": "reset_daily", "admin_only": True, "aliases": ["ریست روزانه"], "takes_args": False},
-    "reset off": {"handler": "reset_off", "admin_only": True, "aliases": ["ریست خاموش"], "takes_args": False},
-    "reset zekr": {"handler": "reset_zekr", "admin_only": True, "aliases": ["ریست ذکر"], "takes_args": False},
-    "reset kol": {"handler": "reset_kol", "admin_only": True, "aliases": ["ریست کل"], "takes_args": False},
-    "time off": {"handler": "time_off", "admin_only": True, "aliases": ["خاموشی"], "takes_args": True},
-    "time_off_disable": {"handler": "time_off_disable", "admin_only": True, "aliases": ["خاموشی غیرفعال"], "takes_args": False},
-    "hadis on": {"handler": "hadis_on", "admin_only": True, "aliases": ["حدیث روزانه"], "takes_args": False},
-    "hadis off": {"handler": "hadis_off", "admin_only": True, "aliases": ["حدیث خاموش"], "takes_args": False},
-    "amar kol": {"handler": "show_total_stats", "admin_only": False, "aliases": ["آمار کل"], "takes_args": False},
-    "amar list": {"handler": "show_ranking", "admin_only": False, "aliases": ["لیست آمار"], "takes_args": False},
-    "stop on": {"handler": "stop_on", "admin_only": True, "aliases": ["توقف روشن"], "takes_args": True},
-    "stop on off": {"handler": "stop_on_off", "admin_only": True, "aliases": ["توقف خاموش"], "takes_args": False},
-    "number": {"handler": "set_khatm_target_number", "admin_only": True, "aliases": ["تعداد"], "takes_args": True},
-    "number off": {"handler": "number_off", "admin_only": True, "aliases": ["تعداد خاموش"], "takes_args": False},
-    "reset number on": {"handler": "reset_number_on", "admin_only": True, "aliases": ["ریست تعداد روشن"], "takes_args": False},
-    "reset number off": {"handler": "reset_number_off", "admin_only": True, "aliases": ["ریست تعداد خاموش"], "takes_args": False},
-    "jam on": {"handler": "jam_on", "admin_only": True, "aliases": ["جمع روشن"], "takes_args": False},
-    "jam off": {"handler": "jam_off", "admin_only": True, "aliases": ["جمع خاموش"], "takes_args": False},
-    "set completion message": {"handler": "set_completion_message", "admin_only": True, "aliases": ["پیام تکمیل"], "takes_args": True},
-    "khatm zekr": {"handler": "start_khatm_zekr", "admin_only": True, "aliases": ["ختم ذکر"], "takes_args": False},    "khatm salavat": {"handler": "start_khatm_salavat", "admin_only": True, "aliases": ["ختم صلوات"], "takes_args": False},
-    "khatm ghoran": {"handler": "start_khatm_ghoran", "admin_only": True, "aliases": ["ختم قرآن"], "takes_args": False},
-    "set range": {"handler": "set_range", "admin_only": True, "aliases": ["تنظیم محدوده"], "takes_args": True},
-    "topic": {"handler": "topic", "admin_only": True, "aliases": ["تاپیک"], "takes_args": True},
-    "tag": {"handler": "tag_command", "admin_only": True, "aliases": ["تگ"], "takes_args": False},
-    "cancel_tag": {"handler": "cancel_tag", "admin_only": True, "aliases": ["لغو تگ"], "takes_args": False},
-    "subtract": {"handler": "subtract_khatm", "admin_only": True, "aliases": ["کاهش"], "takes_args": True},
-    "start from": {"handler": "start_from", "admin_only": True, "aliases": ["شروع از"], "takes_args": True},
-    "delete on": {"handler": "delete_after", "admin_only": True, "aliases": ["حذف روشن"], "takes_args": True},
-    "delete off": {"handler": "delete_off", "admin_only": True, "aliases": ["حذف خاموش"], "takes_args": False},
-    "status": {"handler": "khatm_status", "admin_only": False, "aliases": ["وضعیت"], "takes_args": False},
-    "add zekr": {"handler": "add_zekr", "admin_only": True, "aliases": ["اضافه ذکر"], "takes_args": True},
-    "remove zekr": {"handler": "remove_zekr", "admin_only": True, "aliases": ["حذف ذکر"], "takes_args": False},
-    "list zekrs": {"handler": "list_zekrs", "admin_only": True, "aliases": ["لیست ذکرها"], "takes_args": False},
-}
-
 
 
 
@@ -383,6 +333,9 @@ async def topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton("صلوات 🙏", callback_data="khatm_salavat"),
                 InlineKeyboardButton("قرآن 📖", callback_data="khatm_ghoran"),
                 InlineKeyboardButton("ذکر 📿", callback_data="khatm_zekr"),
+            ],
+            [
+            InlineKeyboardButton("ادعیه و زیارت 🤲", callback_data="khatm_doa") # <--- دکمه جدید اینجاست
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -400,6 +353,9 @@ async def topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "❌ خطایی رخ داد. لطفاً دوباره تلاش کنید یا با ادمین تماس بگیرید."
         )
+
+
+
 
 @ignore_old_messages()
 @log_function_call
@@ -421,17 +377,16 @@ async def khatm_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.debug("Khatm selection details: group_id=%s, topic_id=%s, type=%s",
                     group_id, topic_id, khatm_type)
 
-        # Validate khatm type
-        if khatm_type not in ["salavat", "ghoran", "zekr"]:
+        # 1. Validate khatm type (شامل 'doa' شد)
+        # ---------------------------------------------------
+        if khatm_type not in ["salavat", "ghoran", "zekr", "doa"]:
+        # ---------------------------------------------------
             logger.warning("Invalid khatm type selected: %s", khatm_type)
             await query.message.edit_text("❌ نوع ختم نامعتبر است.")
             return
 
         # Check if group is active
         group = await fetch_one("SELECT is_active FROM groups WHERE group_id = ?", (group_id,))
-        logger.debug("Group status check: group_id=%s, active=%s",
-                    group_id, group["is_active"] if group else None)
-
         if not group or not group["is_active"]:
             logger.warning("Inactive group for khatm selection: group_id=%s", group_id)
             await query.message.edit_text(
@@ -440,78 +395,74 @@ async def khatm_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # Deactivate current khatm if exists
-        old_khatm_type = await deactivate_current_khatm(group_id, topic_id)
-        logger.info("Deactivated current khatm: group_id=%s, topic_id=%s, old_type=%s",
-                   group_id, topic_id, old_khatm_type)
-
+        # Deactivate current khatm logic (ریست کردن ختم قبلی)
+        await execute(
+            "UPDATE topics SET is_active = 0 WHERE topic_id = ? AND group_id = ?",
+            (topic_id, group_id)
+        )
+        
+        # بروزرسانی نوع ختم در دیتابیس
         await execute(
             "UPDATE topics SET khatm_type = ?, is_active = 1, is_completed = 0, current_total = 0 WHERE topic_id = ? AND group_id = ?",
             (khatm_type, topic_id, group_id)
         )
-        logger.info("Reset current_total for group_id=%s, topic_id=%s, khatm_type=%s", group_id, topic_id, khatm_type)
+        logger.info("Reset topic and set type: group_id=%s, topic_id=%s, type=%s", group_id, topic_id, khatm_type)
+        
         message = f" ختم {khatm_type} فعال شد."
 
+        # --- لاجیک بر اساس نوع ختم ---
+
         if khatm_type == "ghoran":
-            logger.debug("Setting up Quran khatm: group_id=%s, topic_id=%s", group_id, topic_id)
             quran = await QuranManager.get_instance()
             start_verse = quran.get_verse(1, 1)
             end_verse = quran.get_verse(114, 6)
             
-            if not start_verse or not end_verse:
-                logger.error("Failed to get verse information: start=%s, end=%s",
-                           bool(start_verse), bool(end_verse))
-                await query.message.edit_text(
-                    "❌ خطا در تنظیم محدوده قرآن. لطفاً دوباره تلاش کنید."
+            if start_verse and end_verse:
+                await execute(
+                    "INSERT OR REPLACE INTO khatm_ranges (group_id, topic_id, start_verse_id, end_verse_id) VALUES (?, ?, ?, ?)",
+                    (group_id, topic_id, start_verse['id'], end_verse['id'])
                 )
-                return
-
-            logger.debug("Setting verse range: start_id=%d, end_id=%d",
-                        start_verse['id'], end_verse['id'])
-
-            await execute(
-                "INSERT OR REPLACE INTO khatm_ranges (group_id, topic_id, start_verse_id, end_verse_id) VALUES (?, ?, ?, ?)",
-                (group_id, topic_id, start_verse['id'], end_verse['id'])
-            )
-            await execute(
-                "UPDATE topics SET current_verse_id = ? WHERE topic_id = ? AND group_id = ?",
-                (start_verse['id'], topic_id, group_id)
-            )
-            logger.info("Successfully set up Quran khatm: group_id=%s, topic_id=%s",
-                       group_id, topic_id)
-            
-            message = "📖 ختم قرآن فعال شد."
+                await execute(
+                    "UPDATE topics SET current_verse_id = ? WHERE topic_id = ? AND group_id = ?",
+                    (start_verse['id'], topic_id, group_id)
+                )
+                message = "📖 ختم قرآن فعال شد."
+            else:
+                 message = "❌ خطا در دریافت اطلاعات قرآن."
 
         elif khatm_type == "zekr":
-            logger.debug("Setting up zekr khatm: group_id=%s, topic_id=%s", group_id, topic_id)
             context.user_data["awaiting_zekr"] = {
                 "topic_id": topic_id,
                 "group_id": group_id,
                 "timestamp": time.time()
             }
-            message += "📿 لطفاً متن ذکر مورد نظر خود را ارسال کنید."
+            message = "📿 ختم ذکر انتخاب شد.\nلطفاً **متن ذکر** مورد نظر خود را ارسال کنید."
+
+        # 2. اضافه شدن بخش ادعیه (Doa)
+        # ---------------------------------------------------
+        elif khatm_type == "doa":
+            context.user_data['doa_setup_step'] = 'waiting_for_name'
+            context.user_data['doa_setup_topic_id'] = topic_id
+            
+            message = "🤲 ختم ادعیه و زیارت انتخاب شد.\n\nلطفاً **نام زیارت یا دعا** را ارسال کنید:\n(مثال: زیارت عاشورا)"
+        # ---------------------------------------------------
 
         elif khatm_type == "salavat":
-            logger.debug("Setting up salavat khatm: group_id=%s, topic_id=%s", group_id, topic_id)
             default_stop_number = 100_000_000_000
             await execute(
-                "UPDATE topics SET stop_number = ?, khatm_type = ?, is_active = 1 WHERE topic_id = ? AND group_id = ?",
-                (default_stop_number, khatm_type, topic_id, group_id)
+                "UPDATE topics SET stop_number = ? WHERE topic_id = ? AND group_id = ?",
+                (default_stop_number, topic_id, group_id)
             )
-            logger.info("Updated topic to salavat with default stop_number: group_id=%s, topic_id=%s, stop_number=%d",
-                       group_id, topic_id, default_stop_number)
             message = "🙏 ختم صلوات فعال شد."
 
-        await query.message.edit_text(message)
-        logger.info("Successfully completed khatm selection: group_id=%s, topic_id=%s, type=%s",
-                   group_id, topic_id, khatm_type)
+        await query.message.edit_text(message, parse_mode=constants.ParseMode.MARKDOWN)
 
     except Exception as e:
         logger.error("Error in khatm_selection: %s", e, exc_info=True)
         if query and query.message:
-            await query.message.edit_text(
-                "❌ خطایی رخ داد. لطفاً دوباره تلاش کنید یا با ادمین تماس بگیرید."
-            )
+            await query.message.edit_text("❌ خطایی رخ داد.")
+
+
 
 @ignore_old_messages()
 async def start_khatm_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1271,3 +1222,267 @@ async def set_completion_count(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("❌ خطایی رخ داد. لطفاً دوباره تلاش کنید یا با ادمین تماس بگیرید.")
 
 
+
+
+# --------------------------------------------------------------------------------
+# بخش مدیریت ادعیه و زیارات (چند آیتمی)
+# --------------------------------------------------------------------------------
+
+# 1. شروع فرآیند افزودن (دستور /add_doa)
+async def start_add_doa_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """نمایش منوی انتخاب نوع (زیارت یا دعا)"""
+    # بررسی ادمین بودن (تابع is_admin در همین فایل موجود است)
+    if not await is_admin(update, context):
+        return
+
+    keyboard = [
+        [
+            InlineKeyboardButton("🕌 زیارت (ستون چپ)", callback_data="set_cat_ziyarat"),
+            InlineKeyboardButton("🤲 دعا (ستون راست)", callback_data="set_cat_doa")
+        ]
+    ]
+    
+    await update.message.reply_text(
+        "📝 **افزودن مورد جدید به لیست**\n\n"
+        "لطفاً نوع مورد را انتخاب کنید:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode=constants.ParseMode.MARKDOWN
+    )
+
+# 2. هندلر انتخاب دسته‌بندی (باید در main.py رجیستر شود)
+async def handle_doa_category_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """پردازش انتخاب نوع (زیارت/دعا) و درخواست نام"""
+    query = update.callback_query
+    await query.answer()
+    
+    # تشخیص نوع
+    category = 'ziyarat' if 'ziyarat' in query.data else 'doa'
+    
+    # پیدا کردن Topic ID صحیح
+    # اگر پیام در تاپیک است، همان را برمی‌داریم. اگر نه، ID گروه را.
+    topic_id = query.message.message_thread_id if query.message.is_topic_message else query.message.chat.id
+    
+    # ذخیره وضعیت در حافظه موقت
+    context.user_data['doa_setup_step'] = 'waiting_for_doa_name'
+    context.user_data['doa_setup_topic_id'] = topic_id
+    context.user_data['doa_category'] = category
+    
+    cat_text = "زیارت 🕌" if category == 'ziyarat' else "دعا 🤲"
+    
+    await query.edit_message_text(
+        f"✅ دسته‌بندی انتخاب شد: **{cat_text}**\n\n"
+        "✍️ حالا لطفاً **نام** آن را بنویسید:\n"
+        "(مثال: زیارت عاشورا، دعای کمیل...)",
+        parse_mode=constants.ParseMode.MARKDOWN
+    )
+
+# 3. تابع اصلی پردازش متن‌های ادمین
+@log_function_call
+async def process_doa_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """
+    بررسی می‌کند آیا ادمین در حال افزودن دعا است؟
+    اگر بله، نام و لینک را می‌گیرد و در جدول doa_items ذخیره می‌کند.
+    """
+    step = context.user_data.get('doa_setup_step')
+    if not step:
+        return False # ادمین در حال انجام این کار نیست
+
+    # بررسی ادمین
+    if not await is_admin(update, context):
+        return False
+
+    # بررسی اینکه پیام در همان تاپیک مورد نظر باشد
+    target_topic_id = context.user_data.get('doa_setup_topic_id')
+    current_topic_id = update.message.message_thread_id if update.message.is_topic_message else update.effective_chat.id
+    
+    if update.effective_chat.is_forum and current_topic_id != target_topic_id:
+        return False # پیام مربوط به تاپیک دیگری است
+
+    text = update.message.text
+    chat_id = update.effective_chat.id
+
+    # --- مرحله 1: دریافت نام ---
+    if step == 'waiting_for_doa_name':
+        context.user_data['doa_title'] = text
+        context.user_data['doa_setup_step'] = 'waiting_for_doa_link'
+        
+        await update.message.reply_text(
+            f"👌 نام **{text}** ثبت شد.\n\n"
+            "🔗 حالا **لینک متن** را ارسال کنید:\n"
+            "(اگر لینک ندارید، کلمه `خالی` را بفرستید)",
+            parse_mode=constants.ParseMode.MARKDOWN
+        )
+        return True
+
+    # --- مرحله 2: دریافت لینک و ذخیره ---
+    elif step == 'waiting_for_doa_link':
+        link = text if text != 'خالی' else ""
+        title = context.user_data.get('doa_title')
+        category = context.user_data.get('doa_category')
+        
+        # 1. افزودن به جدول doa_items
+        # توجه: current_total را 0 می‌گذاریم
+        await execute(
+            """
+            INSERT INTO doa_items (group_id, topic_id, title, link, category, current_total)
+            VALUES (?, ?, ?, ?, ?, 0)
+            """,
+            (chat_id, target_topic_id, title, link, category)
+        )
+        
+        # 2. مطمئن می‌شویم نوع تاپیک روی 'doa' تنظیم است
+        await execute(
+            """
+            UPDATE topics 
+            SET khatm_type = 'doa', is_active = 1 
+            WHERE group_id = ? AND topic_id = ?
+            """,
+            (chat_id, target_topic_id)
+        )
+
+        icon = "🕌" if category == 'ziyarat' else "🤲"
+        await update.message.reply_text(
+            f"🎉 {icon} **{title}** به لیست اضافه شد!\n\n"
+            "مشارکت‌های بعدی کاربران در این تاپیک، منوی انتخاب را نمایش خواهد داد.",
+            parse_mode=constants.ParseMode.MARKDOWN
+        )
+        
+        # پایان کار و پاکسازی
+        context.user_data.clear()
+        return True
+
+    return False
+
+
+
+
+# -----------------------------------------------------------------------------
+# بخش حذف آیتم‌ها
+# -----------------------------------------------------------------------------
+
+# 1. تابع شروع حذف (متصل به دستور /del_doa)
+async def start_remove_doa_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """شروع پروسه حذف آیتم با دریافت نام"""
+    if not await is_admin(update, context):
+        return
+
+    # ذخیره وضعیت: منتظر نام برای حذف
+    topic_id = update.message.message_thread_id if update.message.is_topic_message else update.message.chat.id
+    
+    context.user_data['doa_setup_step'] = 'waiting_for_delete_name'
+    context.user_data['doa_setup_topic_id'] = topic_id
+    
+    await update.message.reply_text(
+        "🗑 **حذف دعا یا زیارت**\n\n"
+        "لطفاً **نام دقیق** موردی که می‌خواهید حذف شود را بنویسید:\n"
+        "(مثال: زیارت عاشورا)",
+        parse_mode=constants.ParseMode.MARKDOWN
+    )
+
+# 2. تابع پردازش حذف (باید در main.py به عنوان MessageHandler اضافه شود)
+@log_function_call
+async def process_doa_removal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """
+    بررسی می‌کند اگر ادمین در حالت حذف است، آیتم را پاک کند.
+    """
+    step = context.user_data.get('doa_setup_step')
+    
+    # فقط اگر در مرحله حذف باشیم اجرا شود
+    if step != 'waiting_for_delete_name':
+        return False
+
+    if not await is_admin(update, context):
+        return False
+
+    # بررسی تاپیک صحیح
+    target_topic_id = context.user_data.get('doa_setup_topic_id')
+    current_topic_id = update.message.message_thread_id if update.message.is_topic_message else update.effective_chat.id
+    
+    if update.effective_chat.is_forum and current_topic_id != target_topic_id:
+        return False
+
+    text = update.message.text.strip() # حذف فاصله‌های اضافی
+    chat_id = update.effective_chat.id
+
+    # بررسی وجود آیتم قبل از حذف
+    item = await fetch_one(
+        "SELECT id FROM doa_items WHERE group_id = ? AND topic_id = ? AND title = ?",
+        (chat_id, target_topic_id, text)
+    )
+    
+    if not item:
+        await update.message.reply_text(
+            f"❌ موردی با نام **{text}** یافت نشد.\n"
+            "لطفاً نام را دقیق وارد کنید یا برای لغو کلمه `لغو` را بفرستید.",
+            parse_mode=constants.ParseMode.MARKDOWN
+        )
+        return True # پیام پردازش شد اما حذف نشد (منتظر تلاش بعدی)
+    
+    # حذف از دیتابیس
+    await execute(
+        "DELETE FROM doa_items WHERE id = ?",
+        (item['id'],)
+    )
+    
+    await update.message.reply_text(
+        f"✅ مورد **{text}** با موفقیت حذف شد.",
+        parse_mode=constants.ParseMode.MARKDOWN
+    )
+    
+    # پایان و پاکسازی وضعیت
+    context.user_data.clear()
+    return True
+
+
+
+TEXT_COMMANDS = {
+    "lock on": {"handler": "lock_on", "admin_only": True, "aliases": ["قفل روشن"], "takes_args": False},
+    "lock off": {"handler": "lock_off", "admin_only": True, "aliases": ["قفل خاموش"], "takes_args": False},
+    "start": {"handler": "start", "admin_only": True, "aliases": ["شروع"], "takes_args": False},
+    "stop": {"handler": "stop", "admin_only": True, "aliases": ["توقف"], "takes_args": False},
+    "help": {"handler": "help_command", "admin_only": False, "aliases": ["راهنما"], "takes_args": False},
+    "max": {"handler": "set_max", "admin_only": True, "aliases": ["حداکثر"], "takes_args": True},
+    "max off": {"handler": "max_off", "admin_only": True, "aliases": ["حداکثر خاموش"], "takes_args": False},
+    "max_ayat": {"handler": "max_ayat", "admin_only": True, "aliases": ["حداکثر آیات"], "takes_args": True},
+    "min": {"handler": "set_min", "admin_only": True, "aliases": ["حداقل"], "takes_args": True},
+    "min_ayat": {"handler": "min_ayat", "admin_only": True, "aliases": ["حداقل آیات"], "takes_args": True},
+    "min off": {"handler": "min_off", "admin_only": True, "aliases": ["حداقل خاموش"], "takes_args": False},
+    "sepas on": {"handler": "sepas_on", "admin_only": True, "aliases": ["سپاس روشن"], "takes_args": False},
+    "sepas off": {"handler": "sepas_off", "admin_only": True, "aliases": ["سپاس خاموش"], "takes_args": False},
+    "add sepas": {"handler": "add_sepas", "admin_only": True, "aliases": ["اضافه سپاس"], "takes_args": True},
+    "reset daily": {"handler": "reset_daily", "admin_only": True, "aliases": ["ریست روزانه"], "takes_args": False},
+    "reset off": {"handler": "reset_off", "admin_only": True, "aliases": ["ریست خاموش"], "takes_args": False},
+    "reset zekr": {"handler": "reset_zekr", "admin_only": True, "aliases": ["ریست ذکر"], "takes_args": False},
+    "reset kol": {"handler": "reset_kol", "admin_only": True, "aliases": ["ریست کل"], "takes_args": False},
+    "time off": {"handler": "time_off", "admin_only": True, "aliases": ["خاموشی"], "takes_args": True},
+    "time_off_disable": {"handler": "time_off_disable", "admin_only": True, "aliases": ["خاموشی غیرفعال"], "takes_args": False},
+    "hadis on": {"handler": "hadis_on", "admin_only": True, "aliases": ["حدیث روزانه"], "takes_args": False},
+    "hadis off": {"handler": "hadis_off", "admin_only": True, "aliases": ["حدیث خاموش"], "takes_args": False},
+    "amar kol": {"handler": "show_total_stats", "admin_only": False, "aliases": ["آمار کل"], "takes_args": False},
+    "amar list": {"handler": "show_ranking", "admin_only": False, "aliases": ["لیست آمار"], "takes_args": False},
+    "stop on": {"handler": "stop_on", "admin_only": True, "aliases": ["توقف روشن"], "takes_args": True},
+    "stop on off": {"handler": "stop_on_off", "admin_only": True, "aliases": ["توقف خاموش"], "takes_args": False},
+    "number": {"handler": "set_khatm_target_number", "admin_only": True, "aliases": ["تعداد"], "takes_args": True},
+    "number off": {"handler": "number_off", "admin_only": True, "aliases": ["تعداد خاموش"], "takes_args": False},
+    "reset number on": {"handler": "reset_number_on", "admin_only": True, "aliases": ["ریست تعداد روشن"], "takes_args": False},
+    "reset number off": {"handler": "reset_number_off", "admin_only": True, "aliases": ["ریست تعداد خاموش"], "takes_args": False},
+    "jam on": {"handler": "jam_on", "admin_only": True, "aliases": ["جمع روشن"], "takes_args": False},
+    "jam off": {"handler": "jam_off", "admin_only": True, "aliases": ["جمع خاموش"], "takes_args": False},
+    "set completion message": {"handler": "set_completion_message", "admin_only": True, "aliases": ["پیام تکمیل"], "takes_args": True},
+    "khatm zekr": {"handler": "start_khatm_zekr", "admin_only": True, "aliases": ["ختم ذکر"], "takes_args": False},    "khatm salavat": {"handler": "start_khatm_salavat", "admin_only": True, "aliases": ["ختم صلوات"], "takes_args": False},
+    "khatm ghoran": {"handler": "start_khatm_ghoran", "admin_only": True, "aliases": ["ختم قرآن"], "takes_args": False},
+    "set range": {"handler": "set_range", "admin_only": True, "aliases": ["تنظیم محدوده"], "takes_args": True},
+    "topic": {"handler": "topic", "admin_only": True, "aliases": ["تاپیک"], "takes_args": True},
+    "tag": {"handler": "tag_command", "admin_only": True, "aliases": ["تگ"], "takes_args": False},
+    "cancel_tag": {"handler": "cancel_tag", "admin_only": True, "aliases": ["لغو تگ"], "takes_args": False},
+    "subtract": {"handler": "subtract_khatm", "admin_only": True, "aliases": ["کاهش"], "takes_args": True},
+    "start from": {"handler": "start_from", "admin_only": True, "aliases": ["شروع از"], "takes_args": True},
+    "delete on": {"handler": "delete_after", "admin_only": True, "aliases": ["حذف روشن"], "takes_args": True},
+    "delete off": {"handler": "delete_off", "admin_only": True, "aliases": ["حذف خاموش"], "takes_args": False},
+    "status": {"handler": "khatm_status", "admin_only": False, "aliases": ["وضعیت"], "takes_args": False},
+    "add zekr": {"handler": "add_zekr", "admin_only": True, "aliases": ["اضافه ذکر"], "takes_args": True},
+    "remove zekr": {"handler": "remove_zekr", "admin_only": True, "aliases": ["حذف ذکر"], "takes_args": False},
+    "list zekrs": {"handler": "list_zekrs", "admin_only": True, "aliases": ["لیست ذکرها"], "takes_args": False},
+    "add doa": {"handler": start_add_doa_item, "admin_only": True, "aliases": ["افزودن دعا", "افزودن زیارت", "مدیریت دعا"], "takes_args": False},
+    "del doa": {"handler": start_remove_doa_item, "admin_only": True, "aliases": ["حذف دعا", "حذف زیارت"], "takes_args": False},
+}

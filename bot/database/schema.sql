@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS topics (
     group_id INTEGER,
     name TEXT, 
     topic_id INTEGER,
-    khatm_type TEXT NOT NULL CHECK(khatm_type IN ('ghoran', 'salavat', 'zekr')),
+    khatm_type TEXT NOT NULL CHECK(khatm_type IN ('ghoran', 'salavat', 'zekr', 'doa')),
     current_total INTEGER DEFAULT 0,
     period_number INTEGER DEFAULT 0,
     reset_on_period INTEGER DEFAULT 0,
@@ -130,6 +130,32 @@ BEGIN
     UPDATE topics SET updated_at = CURRENT_TIMESTAMP
     WHERE group_id = OLD.group_id AND topic_id = OLD.topic_id;
 END;
+
+
+
+CREATE TABLE IF NOT EXISTS topic_doas (
+    group_id INTEGER,
+    topic_id INTEGER,
+    title TEXT NOT NULL,
+    link TEXT NOT NULL,
+    PRIMARY KEY (group_id, topic_id),
+    FOREIGN KEY (group_id, topic_id) REFERENCES topics(group_id, topic_id) ON DELETE CASCADE
+);
+
+-- جدول جدید برای لیست ادعیه و زیارات (چند آیتمی)
+CREATE TABLE IF NOT EXISTS doa_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id INTEGER,
+    topic_id INTEGER,
+    title TEXT NOT NULL,       -- نام (مثلاً زیارت عاشورا)
+    link TEXT,                 -- لینک متن
+    category TEXT,             -- دسته بندی: 'ziyarat' یا 'doa'
+    current_total INTEGER DEFAULT 0, -- آمار اختصاصی این آیتم
+    FOREIGN KEY (group_id, topic_id) REFERENCES topics(group_id, topic_id) ON DELETE CASCADE
+);
+
+-- ایندکس برای سرعت بالاتر در جستجو
+CREATE INDEX IF NOT EXISTS idx_doa_items_group_topic ON doa_items(group_id, topic_id);
 
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_default_sepas ON sepas_texts(text) WHERE is_default = 1;
