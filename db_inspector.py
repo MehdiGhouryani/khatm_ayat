@@ -1,98 +1,124 @@
 import sqlite3
 import os
+import datetime
 
-# لیست مسیرهای احتمالی دیتابیس (بر اساس لاگ‌های شما)
+# لیست مسیرهای احتمالی دیتابیس
 POSSIBLE_PATHS = [
     "bot.db",
     "khatm.db",
-    "/public_html/khatm_ayat/bot.db",
-    "../bot.db"
+    "../bot.db",
+    "/home/rhaegali/public_html/khatm_ayat/bot.db", # مسیر سرور شما طبق لاگ
+    "/public_html/khatm_ayat/bot.db"
 ]
 
+OUTPUT_FILE = "db_report.txt"
+
 def find_database():
-    """پیدا کردن فایل دیتابیس در مسیرهای مختلف"""
+    """پیدا کردن فایل دیتابیس"""
     for path in POSSIBLE_PATHS:
         if os.path.exists(path):
             return path
-    # جستجو در پوشه جاری اگر نام دیگری دارد
+    # جستجو در پوشه جاری
     for file in os.listdir("."):
-        if file.endswith(".db"):
+        if file.endswith(".db") and "user" not in file:
             return file
     return None
 
 def inspect_database():
     db_path = find_database()
     
-    print("="*60)
-    print("🕵️‍♂️  بازرس دیتابیس (Database Inspector)")
-    print("="*60)
-
-    if not db_path:
-        print("❌ فایل دیتابیس پیدا نشد! لطفاً فایل را کنار همین اسکریپت قرار دهید.")
-        return
-
-    print(f"📁 دیتابیس پیدا شد: {db_path}")
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-
-    try:
-        # 1. بررسی جدول‌های موجود
-        print("\n📊 [1] لیست جدول‌های موجود:")
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        tables = cursor.fetchall()
-        for t in tables:
-            print(f"   - {t['name']}")
-
-        # 2. بررسی ساختار جدول‌های حیاتی
-        target_tables = ['topics', 'doa_items', 'topics_old_temp']
-        print("\n🏗  [2] ساختار جدول‌های مهم:")
+    # باز کردن فایل برای نوشتن گزارش
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         
-        for tbl in target_tables:
-            print(f"\n   🔹 جدول: {tbl}")
-            try:
-                cursor.execute(f"PRAGMA table_info({tbl})")
-                columns = cursor.fetchall()
-                if columns:
-                    for col in columns:
-                        print(f"      - {col['name']} ({col['type']})")
-                else:
-                    print("      ❌ این جدول وجود ندارد (که برای topics_old_temp خوب است)")
-            except Exception:
-                print("      ❌ خطا در خواندن اطلاعات جدول")
+        # تابع کمکی برای چاپ همزمان در فایل و کنسول
+        def log(text=""):
+            print(text)
+            f.write(text + "\n")
 
-        # 3. شکار تریگرهای خراب (بخش حیاتی)
-        print("\n🔫 [3] بررسی تریگرها (Triggers):")
-        cursor.execute("SELECT name, sql FROM sqlite_master WHERE type='trigger'")
-        triggers = cursor.fetchall()
+        log("="*60)
+        log(f"🕵️‍♂️ گزارش وضعیت دیتابیس - {datetime.datetime.now()}")
+        log("="*60)
+
+        if not db_path:
+            log("❌ فایل دیتابیس پیدا نشد! لطفاً این فایل را کنار main.py اجرا کنید.")
+            return
+
+        log(f"📁 دیتابیس متصل شده: {os.path.abspath(db_path)}")
         
-        if not triggers:
-            print("   ✅ هیچ تریگری یافت نشد.")
-        
-        problem_found = False
-        for trig in triggers:
-            name = trig['name']
-            sql_content = trig['sql']
+        try:
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            # -----------------------------------------------------
+            # 1. لیست جدول‌ها
+            # -----------------------------------------------------
+            log("\n📊 [1] لیست جدول‌های موجود:")
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = cursor.fetchall()
+            table_names = [t['name'] for t in tables]
+            for name in table_names:
+                log(f"   - {name}")
+
+            # -----------------------------------------------------
+            # 2. جزئیات جدول‌های مشکوک
+            # -----------------------------------------------------
+            target_tables = ['topics', 'doa_items', 'topics_old_temp', 'groups']
+            log("\n🏗  [2] ساختار جدول‌های حیاتی:")
             
-            # بررسی اینکه آیا به جدول حذف شده اشاره می‌کند
-            if "topics_old_temp" in str(sql_content):
-                print(f"   🚩 [خطرناک] تریگر: {name}")
-                print(f"      ⚠️  این تریگر به topics_old_temp اشاره می‌کند و عامل ارور است!")
-                problem_found = True
+            for tbl in target_tables:
+                log(f"\n   🔹 بررسی جدول: {tbl}")
+                if tbl not in table_names:
+                    log("      ❌ این جدول وجود ندارد (اگر topics_old_temp است، یعنی پاک شده).")
+                    continue
+                
+                try:
+                    cursor.execute(f"PRAGMA table_info({tbl})")
+                    columns = cursor.fetchall()
+                    for col in columns:
+                        log(f"      - {col['name']} ({col['type']})")
+                except Exception as e:
+                    log(f"      ❌ خطا: {e}")
+
+            # -----------------------------------------------------
+            # 3. بررسی دقیق تریگرها (بخش اصلی مشکل)
+            # -----------------------------------------------------
+            log("\n🔫 [3] بررسی تریگرها (Triggers):")
+            cursor.execute("SELECT name, tbl_name, sql FROM sqlite_master WHERE type='trigger'")
+            triggers = cursor.fetchall()
+            
+            if not triggers:
+                log("   ✅ هیچ تریگری یافت نشد.")
+            
+            problem_found = False
+            for trig in triggers:
+                name = trig['name']
+                tbl_name = trig['tbl_name']
+                sql_content = trig['sql']
+                
+                log(f"\n   🔸 نام تریگر: {name}")
+                log(f"      متصل به جدول: {tbl_name}")
+                log(f"      کد SQL: {sql_content}")
+                
+                if "topics_old_temp" in str(sql_content):
+                    log(f"      🚩 [خطرناک] این تریگر عامل ارور است!")
+                    problem_found = True
+                else:
+                    log("      ✅ وضعیت: به نظر سالم می‌رسد.")
+
+            log("\n" + "="*60)
+            if problem_found:
+                log("🚨 نتیجه نهایی: تریگرهای خراب پیدا شدند. فایل گزارش را بررسی کنید.")
             else:
-                print(f"   ✅ [سالم] تریگر: {name}")
+                log("✅ نتیجه نهایی: تریگر خرابی با نام topics_old_temp یافت نشد.")
+            log("="*60)
 
-        print("\n" + "="*60)
-        if problem_found:
-            print("🚨 نتیجه: مشکل پیدا شد! تریگرهای علامت‌گذاری شده با 🚩 باید حذف شوند.")
-        else:
-            print("✅ نتیجه: هیچ تریگر خرابی پیدا نشد (شاید مشکل جای دیگری است).")
-        print("="*60)
-
-    except Exception as e:
-        print(f"❌ خطای غیرمنتظره: {e}")
-    finally:
-        conn.close()
+        except Exception as e:
+            log(f"\n❌ خطای غیرمنتظره در حین بازرسی: {e}")
+        finally:
+            if 'conn' in locals():
+                conn.close()
+            log(f"\n📄 گزارش کامل در فایل '{OUTPUT_FILE}' ذخیره شد.")
 
 if __name__ == "__main__":
     inspect_database()
