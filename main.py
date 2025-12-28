@@ -13,7 +13,7 @@ from bot.handlers.admin_handlers import (
     start_khatm_zekr, start_khatm_salavat, start_khatm_ghoran, 
     set_khatm_target_number, TEXT_COMMANDS, set_completion_count,
     add_zekr, remove_zekr, list_zekrs, handle_remove_zekr_click, # <--- توابع جدید و صحیح ادمین
-    is_admin,handle_doa_category_selection,start_remove_doa_item,process_doa_removal,process_doa_setup
+    is_admin,handle_doa_category_selection,start_remove_doa_item,process_doa_removal,process_doa_setup,start_add_doa_item
 )
 from bot.handlers.khatm_handlers import (
     handle_khatm_message, subtract_khatm, start_from, khatm_status,
@@ -303,7 +303,8 @@ def register_handlers(app: Application):
     app.add_handler(CallbackQueryHandler(handle_zekr_selection, pattern=r"^zekr_"))
 
     # انتخاب نوع ختم (منوی تاپیک یا استارت)
-
+# این خط قبلاً جا افتاده بود و باید اضافه شود:
+    
     app.add_handler(CallbackQueryHandler(khatm_selection, pattern="khatm_(zekr|salavat|ghoran|doa)"))
 
     # --- دستورات ---
@@ -392,7 +393,7 @@ def register_handlers(app: Application):
 
     # 3. دستور حذف آیتم توسط ادمین
     app.add_handler(CommandHandler("del_doa", start_remove_doa_item))
-
+    app.add_handler(CommandHandler("add_doa", start_add_doa_item))
 
 
     app.add_handler(ChatMemberHandler(chat_member_handler, ChatMemberHandler.CHAT_MEMBER))
