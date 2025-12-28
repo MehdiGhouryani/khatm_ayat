@@ -1,11 +1,11 @@
 import sqlite3
 import os
 
-# تلاش برای پیدا کردن مسیر دیتابیس از تنظیمات، اگر نشد پیش‌فرض را می‌گیرد
+# تلاش برای پیدا کردن مسیر دیتابیس از تنظیمات
 try:
     from config.settings import DATABASE_PATH
 except ImportError:
-    DATABASE_PATH = "khatm.db" # نام پیش‌فرض دیتابیس شما
+    DATABASE_PATH = "khatm.db"
 
 def update_database_schema():
     print(f"🚀 شروع عملیات آپدیت دیتابیس روی فایل: {DATABASE_PATH}")
@@ -18,25 +18,25 @@ def update_database_schema():
     cursor = conn.cursor()
 
     try:
-        # غیرفعال کردن چک کردن کلید خارجی برای جلوگیری از خطا هنگام تغییر نام جداول
+        # غیرفعال کردن چک کردن کلید خارجی
         cursor.execute("PRAGMA foreign_keys=OFF;")
         cursor.execute("BEGIN TRANSACTION;")
 
         # ---------------------------------------------------------
-        # گام 1: اصلاح جدول topics برای پشتیبانی از نوع 'doa'
+        # گام 1: آپدیت جدول topics (با اضافه کردن zekr_text)
         # ---------------------------------------------------------
         print("1️⃣  بررسی و آپدیت جدول topics...")
         
-        # گرفتن لیست ستون‌های جدول فعلی
+        # 1. گرفتن لیست ستون‌های جدول فعلی
         cursor.execute("PRAGMA table_info(topics)")
         columns_info = cursor.fetchall()
-        column_names = [col[1] for col in columns_info]
-        columns_str = ", ".join(column_names)
+        # نام ستون‌های جدول قدیمی را نگه می‌داریم
+        old_columns = [col[1] for col in columns_info]
 
-        # تغییر نام جدول قدیمی
+        # 2. تغییر نام جدول قدیمی
         cursor.execute("ALTER TABLE topics RENAME TO topics_old_temp;")
 
-        # ساخت جدول جدید با CHECK constraint اصلاح شده
+        # 3. ساخت جدول جدید (ستون zekr_text اضافه شد)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS topics (
                 group_id INTEGER,
@@ -54,6 +54,7 @@ def update_database_schema():
                 current_verse_id INTEGER DEFAULT 0,
                 is_active INTEGER DEFAULT 1,
                 is_completed INTEGER DEFAULT 0,
+                zekr_text TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (group_id, topic_id),
@@ -61,16 +62,27 @@ def update_database_schema():
             );
         """)
 
-        # بازگردانی اطلاعات از جدول قدیم به جدید
-        # ما فقط ستون‌هایی را کپی می‌کنیم که در هر دو وجود دارند تا خطا ندهد
-        cursor.execute(f"INSERT INTO topics ({columns_str}) SELECT {columns_str} FROM topics_old_temp;")
+        # 4. فقط ستون‌هایی که در هر دو جدول (قدیم و جدید) مشترک هستند را کپی می‌کنیم
+        # این کار از خطای "no column named X" جلوگیری می‌کند
+        cursor.execute("PRAGMA table_info(topics)")
+        new_columns_info = cursor.fetchall()
+        new_columns = [col[1] for col in new_columns_info]
         
-        # حذف جدول موقت
+        # پیدا کردن ستون‌های مشترک
+        common_columns = [col for col in old_columns if col in new_columns]
+        columns_str = ", ".join(common_columns)
+
+        print(f"   🔄 در حال کپی اطلاعات ستون‌های: {columns_str}")
+        
+        if columns_str:
+            cursor.execute(f"INSERT INTO topics ({columns_str}) SELECT {columns_str} FROM topics_old_temp;")
+        
+        # 5. حذف جدول موقت
         cursor.execute("DROP TABLE topics_old_temp;")
-        print("   ✅ جدول topics با موفقیت آپدیت شد (نوع 'doa' اضافه شد).")
+        print("   ✅ جدول topics با موفقیت بازسازی شد.")
 
         # ---------------------------------------------------------
-        # گام 2: ساخت جدول topic_doas (نسخه ساده/تکی)
+        # گام 2: ساخت جدول topic_doas
         # ---------------------------------------------------------
         print("2️⃣  ساخت جدول topic_doas...")
         cursor.execute("""
@@ -83,12 +95,11 @@ def update_database_schema():
                 FOREIGN KEY (group_id, topic_id) REFERENCES topics(group_id, topic_id) ON DELETE CASCADE
             );
         """)
-        print("   ✅ جدول topic_doas آماده است.")
 
         # ---------------------------------------------------------
-        # گام 3: ساخت جدول doa_items (نسخه لیست‌دار/جدید)
+        # گام 3: ساخت جدول doa_items
         # ---------------------------------------------------------
-        print("3️⃣  ساخت جدول doa_items (ویژگی جدید)...")
+        print("3️⃣  ساخت جدول doa_items...")
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS doa_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -102,14 +113,12 @@ def update_database_schema():
             );
         """)
         
-        # ساخت ایندکس برای سرعت
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_doa_items_group_topic ON doa_items(group_id, topic_id);
         """)
-        print("   ✅ جدول doa_items آماده است.")
 
         conn.commit()
-        print("\n🎉 تمام تغییرات با موفقیت انجام شد! دیتابیس آماده است.")
+        print("\n🎉 تمام تغییرات با موفقیت انجام شد!")
 
     except Exception as e:
         conn.rollback()
