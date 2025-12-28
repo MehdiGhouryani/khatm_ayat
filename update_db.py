@@ -1,59 +1,51 @@
 import sqlite3
 import os
 
-def fix_database_triggers():
-    # 1. تعریف مسیر در ابتدای تابع برای جلوگیری از خطا
-    target_db_path = "/public_html/khatm_ayat/bot.db"
-    
-    # بررسی وجود فایل و اصلاح مسیر در صورت نیاز
-    if not os.path.exists(target_db_path):
-        if os.path.exists("bot.db"):
-            target_db_path = "bot.db"
-            print(f"⚠️ مسیر کامل یافت نشد، استفاده از مسیر نسبی: {target_db_path}")
-        # اگر فایل کلا پیدا نشد، پایین‌تر ارور میدهیم
+# مسیر دقیق دیتابیس (طبق لاگ‌های قبلی شما)
+DB_PATH = "bot.db"  # چون اسکریپت قبلی با این نام موفق شد
 
-    print(f"🔧 در حال اتصال به دیتابیس در مسیر : {target_db_path}")
-
-    if not os.path.exists(target_db_path):
-        print(f"❌ فایل دیتابیس در مسیر زیر پیدا نشد:\n{target_db_path}")
+def fix_triggers():
+    if not os.path.exists(DB_PATH):
+        print(f"❌ دیتابیس {DB_PATH} پیدا نشد!")
         return
 
-    conn = sqlite3.connect(target_db_path)
+    print(f"🔧 در حال اتصال به {DB_PATH}...")
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
     try:
-        # 2. پیدا کردن تریگرهای خراب
-        print("🔍 در حال جستجوی تریگرهای خراب...")
-        cursor.execute("SELECT name, sql FROM sqlite_master WHERE type = 'trigger'")
-        all_triggers = cursor.fetchall()
+        # 1. لیست کردن تمام تریگرها
+        cursor.execute("SELECT name, sql FROM sqlite_master WHERE type='trigger'")
+        triggers = cursor.fetchall()
         
-        broken_triggers = []
-        for name, sql in all_triggers:
-            if sql and "topics_old_temp" in sql:
-                broken_triggers.append(name)
-        
-        if not broken_triggers:
-            print("✅ هیچ تریگر خرابی پیدا نشد.")
-        else:
-            print(f"⚠️ تعداد {len(broken_triggers)} تریگر خراب پیدا شد.")
-            for trigger_name in broken_triggers:
-                print(f"   🗑 در حال حذف تریگر: {trigger_name} ...")
-                cursor.execute(f"DROP TRIGGER IF EXISTS {trigger_name}")
-            
-            conn.commit()
-            print("🎉 تمام تریگرهای خراب با موفقیت حذف شدند.")
+        broken_count = 0
+        print(f"🔍 بررسی {len(triggers)} تریگر موجود...")
 
-        # 3. پاکسازی نهایی
-        cursor.execute("DROP TABLE IF EXISTS topics_old_temp")
-        conn.commit()
-        print("🧹 پاکسازی نهایی انجام شد.")
+        for name, sql in triggers:
+            if "topics_old_temp" in sql:
+                print(f"⚠️ تریگر خراب پیدا شد: {name}")
+                cursor.execute(f"DROP TRIGGER IF EXISTS {name}")
+                print(f"   🗑 تریگر {name} حذف شد.")
+                broken_count += 1
+        
+        if broken_count == 0:
+            print("✅ هیچ تریگر خرابی یافت نشد.")
+        else:
+            print(f"🎉 تعداد {broken_count} تریگر خراب پاکسازی شد.")
+            conn.commit()
+
+        # 2. بررسی جدول topics_old_temp
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='topics_old_temp'")
+        if cursor.fetchone():
+            print("🗑 جدول موقت topics_old_temp پیدا شد، در حال حذف...")
+            cursor.execute("DROP TABLE topics_old_temp")
+            conn.commit()
+            print("✅ جدول موقت حذف شد.")
 
     except Exception as e:
-        print(f"❌ خطا در تعمیر دیتابیس: {e}")
-        conn.rollback()
+        print(f"❌ خطا: {e}")
     finally:
         conn.close()
-        print("🔒 اتصال دیتابیس بسته شد.")
 
 if __name__ == "__main__":
-    fix_database_triggers()
+    fix_triggers()
