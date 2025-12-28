@@ -723,8 +723,6 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 
-
-
 @ignore_old_messages()
 @log_function_call
 async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -766,7 +764,8 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # Ensure number is positive for subtraction
+        # Ensure number is positive for subtraction logic below
+        # (Note: If handed over to handle_khatm_message, the original negative text is used)
         number = abs(number)
         logger.debug("Normalized subtraction amount: %d", number)
 
@@ -801,6 +800,7 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.debug("No topic found: topic_id=%s, group_id=%s", topic_id, group_id)
             await update.message.reply_text("❌ تاپیک ختم تنظیم نشده است. از <code>topic</code> یا 'تاپیک' استفاده کنید.", parse_mode=constants.ParseMode.HTML)
             return
+        
         if not topic["is_active"]:
             logger.debug("Topic is not active: topic_id=%s", topic_id)
             await update.message.reply_text(
@@ -808,6 +808,15 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode=constants.ParseMode.HTML
             )
             return
+
+        # ---------------------------------------------------------------------
+        # ✅ بخش جدید و مهم: ارجاع ادعیه به تابع اصلی برای نمایش منو
+        # ---------------------------------------------------------------------
+        if topic["khatm_type"] == "doa":
+            # تابع handle_khatm_message خودش منوی انتخاب (زیارت/دعا) را نشان می‌دهد
+            # و چون عدد منفی است، از دیتابیس کم خواهد کرد.
+            return await handle_khatm_message(update, context)
+        # ---------------------------------------------------------------------
 
         user_id = update.effective_user.id
         username = update.effective_user.username or update.effective_user.first_name
@@ -963,6 +972,13 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Timed out sending error message for group_id=%s, topic_id=%s",
                 group_id, topic_id
             )
+
+
+
+
+
+
+
 
 @ignore_old_messages()
 @log_function_call
