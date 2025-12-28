@@ -792,6 +792,10 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             """,
             (topic_id, group_id)
         )
+        if topic and topic["khatm_type"] == "doa":
+            # چون ادعیه چند تا هستند، باید منو باز شود تا انتخاب کنید از کدام کم شود
+            return await handle_khatm_message(update, context)
+        # -------------------------------------------------------------
         logger.debug("Retrieved topic info: topic_id=%s, type=%s, active=%s", 
                     topic_id, topic["khatm_type"] if topic else None, 
                     topic["is_active"] if topic else None)
