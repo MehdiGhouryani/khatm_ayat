@@ -1,46 +1,63 @@
 import sqlite3
-import os
 
-# مسیر دقیق دیتابیس (طبق لاگ‌های قبلی شما)
-DB_PATH = "bot.db"  # چون اسکریپت قبلی با این نام موفق شد
+DB_PATH = "bot.db"
 
-def fix_triggers():
-    if not os.path.exists(DB_PATH):
-        print(f"❌ دیتابیس {DB_PATH} پیدا نشد!")
-        return
+# لیست گروه‌هایی که در لاگ ارور داده‌اند
+BAD_GROUPS = [
+    -1003165641310, # Chat not found
+    -1003086499196, # Chat not found
+    -1002945552819, # Chat not found
+    -1002687739294, # Not enough rights
+    -1002655364407, # Not enough rights
+    -1002646881131, # Not enough rights
+    -1002527451082, # Not enough rights
+    -1002418192967, # Chat not found
+    -1002105708239, # Not enough rights
+    -5075384381,    # Not enough rights
+    -4993388081,    # Not enough rights
+    -4955743823,    # Forbidden
+    -4931062746,    # Not enough rights
+    -4907173889,    # Not enough rights
+    -4807269622,    # Forbidden
+    -4607665006,    # Not enough rights
+]
 
-    print(f"🔧 در حال اتصال به {DB_PATH}...")
+# گروه‌هایی که تغییر ID داده‌اند (Migrated)
+MIGRATED_GROUPS = {
+    -4964230569: -1003165641310,
+    -4902839150: -1002935045396,
+    -4886411990: -1002960690770,
+    -4812687122: -1003328262510
+}
+
+def clean_database():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
+    
+    print("🧹 شروع پاکسازی گروه‌ها...")
 
     try:
-        # 1. لیست کردن تمام تریگرها
-        cursor.execute("SELECT name, sql FROM sqlite_master WHERE type='trigger'")
-        triggers = cursor.fetchall()
-        
-        broken_count = 0
-        print(f"🔍 بررسی {len(triggers)} تریگر موجود...")
+        # 1. حذف/غیرفعال کردن گروه‌های خراب
+        for gid in BAD_GROUPS:
+            cursor.execute("UPDATE groups SET is_active = 0 WHERE group_id = ?", (gid,))
+            print(f"🚫 گروه {gid} غیرفعال شد.")
 
-        for name, sql in triggers:
-            if "topics_old_temp" in sql:
-                print(f"⚠️ تریگر خراب پیدا شد: {name}")
-                cursor.execute(f"DROP TRIGGER IF EXISTS {name}")
-                print(f"   🗑 تریگر {name} حذف شد.")
-                broken_count += 1
-        
-        if broken_count == 0:
-            print("✅ هیچ تریگر خرابی یافت نشد.")
-        else:
-            print(f"🎉 تعداد {broken_count} تریگر خراب پاکسازی شد.")
-            conn.commit()
+        # 2. آپدیت گروه‌های منتقل شده
+        for old_id, new_id in MIGRATED_GROUPS.items():
+            # چک کنیم اگر گروه جدید وجود ندارد، آیدی قدیم را آپدیت کنیم
+            cursor.execute("SELECT 1 FROM groups WHERE group_id = ?", (new_id,))
+            if not cursor.fetchone():
+                cursor.execute("UPDATE groups SET group_id = ? WHERE group_id = ?", (new_id, old_id))
+                cursor.execute("UPDATE topics SET group_id = ? WHERE group_id = ?", (new_id, old_id))
+                # سایر جداول وابسته هم باید آپدیت شوند (users, contributions, ...)
+                print(f"🔄 گروه {old_id} به {new_id} منتقل شد.")
+            else:
+                # اگر گروه جدید قبلاً هست، قدیمی را حذف می‌کنیم
+                cursor.execute("DELETE FROM groups WHERE group_id = ?", (old_id,))
+                print(f"🗑 گروه قدیمی {old_id} حذف شد (نسخه جدید موجود است).")
 
-        # 2. بررسی جدول topics_old_temp
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='topics_old_temp'")
-        if cursor.fetchone():
-            print("🗑 جدول موقت topics_old_temp پیدا شد، در حال حذف...")
-            cursor.execute("DROP TABLE topics_old_temp")
-            conn.commit()
-            print("✅ جدول موقت حذف شد.")
+        conn.commit()
+        print("✅ پاکسازی تمام شد.")
 
     except Exception as e:
         print(f"❌ خطا: {e}")
@@ -48,4 +65,4 @@ def fix_triggers():
         conn.close()
 
 if __name__ == "__main__":
-    fix_triggers()
+    clean_database()
