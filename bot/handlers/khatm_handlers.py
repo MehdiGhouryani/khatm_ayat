@@ -182,7 +182,7 @@ async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
         topic = await fetch_one(
             """
-            SELECT khatm_type, current_total, zekr_text, min_ayat, max_ayat, period_number, 
+            SELECT khatm_type, current_total, min_ayat, max_ayat, period_number, 
                    stop_number, completion_message, current_verse_id, is_active, 
                    completion_count, is_completed, min_number, max_number 
             FROM topics WHERE topic_id = ? AND group_id = ?
@@ -904,7 +904,7 @@ async def subtract_khatm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             new_total,
             sepas_text,
             group_id,
-            topic["zekr_text"] if topic["khatm_type"] in ["zekr", "salavat"] else None,
+            None,  # zekr_text دیگر در جدول topics وجود ندارد
             max_display_verses=max_display,
             completion_count=topic["completion_count"]
         )
@@ -1143,7 +1143,6 @@ async def khatm_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"نوع: {khatm_type}\n"
             f"فعال: {'بله' if is_active else 'خیر'}\n"
             f"مقدار فعلی: {current_total}\n"
-            f"متن ذکر: {zekr_text}\n"
             f"تعداد هدف: {stop_number}"
         )
         logger.debug("Prepared status message: active=%s, current_total=%s, stop_number=%s",

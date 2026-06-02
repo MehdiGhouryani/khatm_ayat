@@ -104,6 +104,8 @@ def map_handlers():
         "set_completion_count": set_completion_count,
         "add_zekr": add_zekr,       # اضافه شد
         "remove_zekr": remove_zekr, # اضافه شد
+        "add doa": start_add_doa_item,
+        "del doa": start_remove_doa_item,
         "list_zekrs": list_zekrs,   # اضافه شد
         "tag_command": lambda update, context: TagManager(context).tag_command(update, context),
         "cancel_tag": lambda update, context: TagManager(context).cancel_tag(update, context),
