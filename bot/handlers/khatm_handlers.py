@@ -34,6 +34,9 @@ def log_function_call(func):
 async def handle_khatm_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle khatm-related messages for salavat, zekr, or Quran contributions."""
     try:
+        group_id = update.effective_chat.id if update.effective_chat else None
+        topic_id = update.effective_message.message_thread_id if update.effective_message else None
+    # --------------------------------------------
         if await process_doa_removal(update, context):
             return
         if await process_doa_setup(update, context):

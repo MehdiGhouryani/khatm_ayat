@@ -1288,7 +1288,9 @@ async def handle_doa_category_selection(update: Update, context: ContextTypes.DE
     )
 
 
-# 3. تابع اصلی پردازش متن‌های ادمین
+
+
+# 3. تابع اصلی پردازش متن‌های ادمین (نسخه اصلاح‌شده و بدون خطای دیتابیس)
 @log_function_call
 async def process_doa_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """
@@ -1332,8 +1334,28 @@ async def process_doa_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         title = context.user_data.get('doa_title')
         category = context.user_data.get('doa_category')
         
-        # 1. افزودن به جدول doa_items
-        # توجه: current_total را 0 می‌گذاریم
+        # ۱. ابتدا بررسی می‌کنیم که آیا این تاپیک در جدول اصلی topics وجود دارد یا خیر
+        topic_exists = await fetch_one(
+            "SELECT 1 FROM topics WHERE group_id = ? AND topic_id = ?",
+            (chat_id, target_topic_id)
+        )
+        
+        # ۲. اگر تاپیک هنوز در دیتابیس ثبت نشده، ابتدا آن را می‌سازیم تا خطا رخ ندهد
+        if not topic_exists:
+            # تلاش برای پیدا کردن نام واقعی تاپیک از پیام‌های تلگرام، در غیر این صورت نام پیش‌فرض
+            topic_name = "ختم ادعیه و زیارات"
+            if update.effective_message.reply_to_message and update.effective_message.reply_to_message.forum_topic_created:
+                topic_name = update.effective_message.reply_to_message.forum_topic_created.name
+                
+            await execute(
+                """
+                INSERT INTO topics (group_id, topic_id, name, khatm_type)
+                VALUES (?, ?, ?, 'doa')
+                """,
+                (chat_id, target_topic_id, topic_name)
+            )
+        
+        # ۳. حالا با اطمینان آیتم دعا را در جدول doa_items درج می‌کنیم
         await execute(
             """
             INSERT INTO doa_items (group_id, topic_id, title, link, category, current_total)
@@ -1342,7 +1364,7 @@ async def process_doa_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             (chat_id, target_topic_id, title, link, category)
         )
         
-        # 2. مطمئن می‌شویم نوع تاپیک روی 'doa' تنظیم است
+        # ۴. مطمئن می‌شویم نوع تاپیک روی 'doa' تنظیم و فعال است
         await execute(
             """
             UPDATE topics 
@@ -1359,8 +1381,10 @@ async def process_doa_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             parse_mode=constants.ParseMode.MARKDOWN
         )
         
-        # پایان کار و پاکسازی
-        context.user_data.clear()
+        # پایان کار و پاکسازی اطلاعات موقت همین بخش (به جای clear کل دیتا)
+        for key in ['doa_setup_step', 'doa_setup_topic_id', 'doa_title', 'doa_category']:
+            context.user_data.pop(key, None)
+            
         return True
 
     return False
